@@ -247,3 +247,63 @@ class TestEndToEndPipeline:
 
         # MRI params should be accessible
         assert reg_contract.domain_params is not None
+
+
+class TestDocumentPreClassifier:
+    """Verify the deterministic pre-classifier catches non-trial documents."""
+
+    def test_fda_guidance_classified_as_regulatory(self):
+        from compilers.contract_extractor import _preclassify_document
+
+        fda_text = """
+        Guidance for Industry and FDA Staff
+        Criteria for Significant Risk Investigations of Magnetic
+        Resonance Diagnostic Devices
+        Contains Nonbinding Recommendations
+        This guidance describes the device operation conditions for magnetic
+        resonance diagnostic devices that FDA considers significant risk.
+        This document supersedes "Guidance for Magnetic Resonance Diagnostic Devices"
+        """
+        result = _preclassify_document(fda_text)
+        assert result == "regulatory_guidance"
+
+    def test_clinical_trial_classified_correctly(self):
+        from compilers.contract_extractor import _preclassify_document
+
+        trial_text = """
+        Randomized Controlled Trial of Cognitive Behavioral Therapy
+        Study Protocol for Generalized Anxiety Disorder
+        Primary endpoint: GAD-7 Anxiety Scale
+        Sample size calculation: N=200, Power=0.80
+        Inclusion criteria: Adults 18-65 with GAD diagnosis
+        Exclusion criteria: Current suicidal ideation
+        Informed consent obtained from all participants
+        Institutional Review Board approval granted
+        Randomization was performed using a computer-generated sequence
+        """
+        result = _preclassify_document(trial_text)
+        assert result == "clinical_trial"
+
+    def test_ambiguous_returns_none(self):
+        from compilers.contract_extractor import _preclassify_document
+
+        ambiguous_text = "This is a short document about science and research methods."
+        result = _preclassify_document(ambiguous_text)
+        assert result is None
+
+    def test_regulatory_with_thresholds_not_clinical(self):
+        from compilers.contract_extractor import _preclassify_document
+
+        threshold_text = """
+        Guidance for Industry and FDA Staff
+        Contains Nonbinding Recommendations
+        This guidance describes the device operation conditions for
+        magnetic resonance diagnostic devices that FDA considers significant risk.
+        Main static magnetic field greater than 8 tesla for adults
+        Whole body SAR averaged over 15 min equal to or greater than 4 W/kg
+        Head SAR averaged over 10 min equal to or greater than 3 W/kg
+        Gradient fields rate of change sufficient to produce nerve stimulation
+        Peak unweighted sound pressure level greater than 140 dB
+        """
+        result = _preclassify_document(threshold_text)
+        assert result == "regulatory_guidance"

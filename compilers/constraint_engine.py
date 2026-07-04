@@ -52,7 +52,8 @@ class ConstraintStatus(str, Enum):
     SATISFIED = "satisfied"
     VIOLATED = "violated"
     UNCERTAIN = "uncertain"
-    NOT_APPLICABLE = "not_applicable"
+    MISSING = "missing"            # Data absent from document — cannot evaluate
+    NOT_APPLICABLE = "not_applicable"  # Constraint doesn't apply to this doc type
 
 
 class ConstraintResult(BaseModel):
@@ -125,6 +126,14 @@ class PrimaryOutcomeEquality(Constraint):
             if d.get("node_type") == "outcome" and d.get("outcome_type") == "primary"
         }
 
+        # Neither document has primary outcomes → MISSING
+        if not reg_primaries and not pub_primaries:
+            return ConstraintResult(
+                constraint_id=self.constraint_id, constraint_name=self.name,
+                description=self.description, status=ConstraintStatus.MISSING,
+                violation_detail="No primary outcomes found in either document — cannot evaluate equality",
+            )
+
         violations = []
         for oid, rdata in reg_primaries.items():
             if oid not in pub_primaries:
@@ -173,6 +182,15 @@ class SampleSizeConsistency(Constraint):
         pub_ss = pub_graph.nodes.get("sample_size", {})
 
         planned = reg_ss.get("planned_n")
+        actual = pub_ss.get("actual_n")
+
+        # Neither document has sample size info → MISSING
+        if not planned and not actual:
+            return ConstraintResult(
+                constraint_id=self.constraint_id, constraint_name=self.name,
+                description=self.description, status=ConstraintStatus.MISSING,
+                violation_detail="No sample size information found in either document",
+            )
         actual = pub_ss.get("actual_n") or pub_ss.get("planned_n")
 
         if not planned or not actual:
@@ -277,6 +295,16 @@ class HypothesisPresence(Constraint):
         )
 
     def evaluate(self, reg_graph: nx.DiGraph, pub_graph: nx.DiGraph) -> ConstraintResult:
+        reg_hypotheses_exist = any(d.get("node_type") == "hypothesis" for _, d in reg_graph.nodes(data=True))
+        pub_hypotheses_exist = any(d.get("node_type") == "hypothesis" for _, d in pub_graph.nodes(data=True))
+
+        if not reg_hypotheses_exist and not pub_hypotheses_exist:
+            return ConstraintResult(
+                constraint_id=self.constraint_id, constraint_name=self.name,
+                description=self.description, status=ConstraintStatus.MISSING,
+                violation_detail="No hypotheses found in either document — document may not be a clinical trial",
+            )
+
         missing = []
         for n, d in reg_graph.nodes(data=True):
             if d.get("node_type") == "hypothesis" and n not in pub_graph.nodes:
@@ -314,6 +342,14 @@ class ClaimHypothesisMapping(Constraint):
             n for n, d in reg_graph.nodes(data=True)
             if d.get("node_type") == "hypothesis"
         }
+        pub_claims_exist = any(d.get("node_type") == "claim" for _, d in pub_graph.nodes(data=True))
+
+        if not reg_hypotheses and not pub_claims_exist:
+            return ConstraintResult(
+                constraint_id=self.constraint_id, constraint_name=self.name,
+                description=self.description, status=ConstraintStatus.MISSING,
+                violation_detail="No hypotheses or claims found in either document",
+            )
 
         unmapped = []
         for n, d in pub_graph.nodes(data=True):

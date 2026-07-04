@@ -52,6 +52,7 @@ class ProtocolGraphBuilder:
                 hypothesis_type=h.hypothesis_type.value,
                 variables=h.variables,
                 direction=h.direction,
+                status=h.status.value if hasattr(h, 'status') else "present",
                 doc_id=contract.doc_id,
             )
 
@@ -64,6 +65,7 @@ class ProtocolGraphBuilder:
                 outcome_type=o.outcome_type.value,
                 timepoint=o.timepoint,
                 description=o.description,
+                status=o.status.value if hasattr(o, 'status') else "present",
                 doc_id=contract.doc_id,
             )
 
@@ -110,6 +112,7 @@ class ProtocolGraphBuilder:
                 planned_n=ss.planned_n,
                 actual_n=ss.actual_n,
                 dropout_rate=ss.dropout_rate,
+                status=ss.status.value if hasattr(ss, 'status') else "present",
                 doc_id=contract.doc_id,
             )
 

@@ -20,6 +20,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ───────────────────────────── Enums ─────────────────────────────
 
+class FieldStatus(str, Enum):
+    """Extraction provenance status for every scientific field.
+
+    Every extracted field (hypothesis, outcome, analysis, claim, parameter)
+    reports how it was populated: directly from the source text, inferred,
+    missing entirely, or not applicable to this document type.
+    """
+    PRESENT = "present"           # Extracted from document with evidence
+    MISSING = "missing"           # Expected but absent from document
+    LOW_EVIDENCE = "low_evidence"  # Extracted but with weak/no evidence
+    NOT_APPLICABLE = "not_applicable"  # Field does not apply to this document type
+
+
 class HypothesisType(str, Enum):
     PRIMARY = "primary"
     SECONDARY = "secondary"
@@ -190,6 +203,7 @@ class Hypothesis(BaseModel):
     direction: Optional[str] = Field(default=None, description="Directionality: two-sided, greater, less")
     evidence: list[EvidenceSpan] = Field(default_factory=list, description="Source excerpts")
     uncertainty: UncertaintyFlag = Field(default_factory=UncertaintyFlag)
+    status: FieldStatus = Field(default=FieldStatus.PRESENT, description="Extraction provenance")
 
     @field_validator("variables", mode="before")
     @classmethod
@@ -217,6 +231,7 @@ class Outcome(BaseModel):
     description: Optional[str] = Field(default=None, description="Additional details")
     evidence: list[EvidenceSpan] = Field(default_factory=list)
     uncertainty: UncertaintyFlag = Field(default_factory=UncertaintyFlag)
+    status: FieldStatus = Field(default=FieldStatus.PRESENT, description="Extraction provenance")
 
 
 class ExclusionCriterion(BaseModel):
@@ -237,6 +252,7 @@ class SampleSize(BaseModel):
     justification: Optional[str] = Field(default=None, description="Sample size justification")
     evidence: list[EvidenceSpan] = Field(default_factory=list)
     uncertainty: UncertaintyFlag = Field(default_factory=UncertaintyFlag)
+    status: FieldStatus = Field(default=FieldStatus.PRESENT, description="Extraction provenance")
 
 
 class StatisticalAnalysis(BaseModel):
