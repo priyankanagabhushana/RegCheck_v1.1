@@ -15,11 +15,9 @@ COPY graph/ graph/
 COPY agents/ agents/
 COPY reports/ reports/
 COPY demos/ demos/
-COPY evaluation/ evaluation/
 COPY tests/ tests/
 COPY data/samples/ data/samples/
 COPY data/output/ data/output/
-COPY data/study6_compare_trials_dataset/ data/study6_compare_trials_dataset/
 COPY main.py .
 COPY app.py .
 COPY auth.py .

@@ -12,7 +12,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 .ipynb_checkpoints/
-data/output/
 data/study1_fda_mri_guidance/
 data/study2_moderna_vaccine/
 data/study3_pfizer_vaccine/
