@@ -234,11 +234,19 @@ Category:"""
         # Clinical trial: use ContractExtractor for full extraction with evidence verification
         extractor = ContractExtractor(model=model, max_chars=25000)
         tables_text = "\n\n".join(parsed.tables[:5]) if parsed.tables else "None"
+
+        # Evidence-guided retrieval: determine which fields have evidence BEFORE extraction
+        from compilers.contract_extractor import _build_retrieval_hints
+        retrieval_hints = _build_retrieval_hints(parsed.markdown[:25000])
+
         prompt = f"""Extract structured scientific information from this {doc_type} into JSON.
 Document text:
 {parsed.markdown[:25000]}
 Tables:
 {tables_text[:5000]}
+
+{retrieval_hints}
+
 Return a JSON object with: doc_id, doc_type, title, authors,
 hypotheses (list of {{id, description, hypothesis_type, variables, status, evidence: [{{text, source_doc, section}}]}}),
 outcomes (list of {{id, measure, timepoint, outcome_type, description, status, evidence: [{{text, source_doc, section}}]}}),
@@ -251,8 +259,7 @@ status field: "present" (extracted from doc), "missing" (absent), "low_evidence"
 
 CRITICAL RULES:
 - Every hypothesis, outcome, and sample_size MUST have at least one evidence span with exact text from the document.
-- If you cannot find a direct supporting quote for a field, DO NOT create the object — return empty list []. Set status to "missing" only if you expected the field to exist but found nothing.
-- If the document is FDA guidance, policy, or regulatory text, ALL scientific lists MUST be empty [].
+- If the retrieval analysis says a field is NOT FOUND, set status to "missing" and return empty list [].
 - Tables of thresholds or limits are NOT hypotheses. Do not convert table rows into hypotheses.
 
 IMPORTANT: variables must be a list of plain strings, not dicts.
@@ -270,8 +277,9 @@ Return ONLY valid JSON."""
                 data = json.loads(raw)
                 contract = ScientificContract.model_validate(data)
                 contract.doc_id = doc_id; contract.doc_type = doc_type; contract.raw_markdown = parsed.markdown
-                # Apply evidence verification and sanity checks
+                # Apply evidence verification, retrieval enforcement, and sanity checks
                 contract = extractor._verify_extraction_evidence(contract)
+                contract = extractor._enforce_retrieval_results(contract, parsed.markdown[:25000])
                 contract = extractor._validate_extraction_sanity(contract, doc_category)
                 return contract
             except Exception as e:

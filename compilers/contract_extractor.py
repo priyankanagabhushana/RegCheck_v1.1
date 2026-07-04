@@ -178,6 +178,7 @@ CRITICAL RULES — follow these exactly:
 5. For each hypothesis, outcome, or analysis you extract, you MUST include evidence: [{"text": "exact quoted text from document", "source_doc": "[registration|publication]", "section": "Methods/Para 3"}]
 6. If no evidence text exists for a field, do not create the object — return empty list.
 7. Be skeptical: if you're unsure whether something counts as a hypothesis, it probably doesn't. Err on the side of empty.
+8. RESPECT THE RETRIEVAL HINTS: If the retrieval analysis says "NOT FOUND" for a field, that field MUST be empty. Do NOT try to find content that the retrieval could not find.
 
 Output a JSON object matching the ScientificContract schema."""
 
@@ -185,6 +186,8 @@ EXTRACTION_USER_PROMPT = """Extract the structured scientific information from t
 
 Document type: {doc_type}
 Document ID: {doc_id}
+
+{retrieval_hints}
 
 Document content:
 {markdown}
@@ -205,10 +208,170 @@ Return a JSON object with these fields:
 - analyses: list of {{id, model, dependent_variable, independent_variables, covariates, corrections, software, evidence: [{{text, source_doc}}]}}
 - claims: list of {{id, text, mapped_hypothesis_id, strength, supporting_evidence: [{{text, source_doc}}]}}
 
-status field values: "present" (extracted from document), "missing" (expected but absent), "low_evidence" (found but weak), "not_applicable" (field doesn't apply)
+status field values: "present" (extracted from doc), "missing" (expected but absent), "low_evidence" (found but weak), "not_applicable" (field doesn't apply)
 Every extracted object MUST have at least one evidence span with exact text.
-If no evidence, set status to "missing" or "low_evidence" and still provide the evidence reason.
+If the retrieval analysis says a field is NOT FOUND, set its status to "missing" and return an empty list for it.
 Return ONLY the JSON object, no other text."""
+
+
+# ───────────────────────────── Field-Level Evidence Retrieval ─────────────────────────────
+
+# Keywords that indicate relevant content for each field type
+_FIELD_RETRIEVAL_PATTERNS = {
+    "hypotheses": {
+        "keywords": [
+            "hypothesize", "hypothesis", "hypotheses", "we predict", "we hypothesize",
+            "primary hypothesis", "secondary hypothesis", "aim", "objective",
+            "we expect", "we postulate", "research question",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory", "significant risk",
+            "contains nonbinding", "operating condition",
+        ],
+    },
+    "outcomes": {
+        "keywords": [
+            "primary outcome", "secondary outcome", "primary endpoint", "secondary endpoint",
+            "outcome measure", "outcome measure", "efficacy endpoint", "safety endpoint",
+            "primary measure", "secondary measure", "outcome variable",
+            "gad-7", "phq-9", "beck depression", "Hamilton", "STAI",
+            "pain score", "quality of life", "SF-36", "EQ-5D",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory", "significant risk",
+        ],
+    },
+    "sample_size": {
+        "keywords": [
+            "sample size", "sample size calculation", "power analysis", "power calculation",
+            "planned enrollment", "target enrollment", "planned n", "target n",
+            "number of participants", "number of subjects", "recruitment target",
+            "effect size", "alpha level", "significance level",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory",
+        ],
+    },
+    "analyses": {
+        "keywords": [
+            "statistical analysis", "statistical model", "analysis plan",
+            "anova", "ancova", "t-test", "chi-square", "regression",
+            "mixed model", "linear model", "logistic regression",
+            "cox proportional", "kaplan-meier", "wilcoxon", "mann-whitney",
+            "multiple comparison", "bonferroni", "holm", "fdr",
+            "intention to treat", "per protocol", "sensitivity analysis",
+            "covariate", "adjusted model", "unadjusted model",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory",
+        ],
+    },
+    "exclusion_criteria": {
+        "keywords": [
+            "exclusion criteria", "inclusion criteria", "eligibility criteria",
+            "inclusion and exclusion", "eligibility", "inclusion criterion",
+            "exclusion criterion", "inclusion/exclusion",
+            "participants were eligible", "participants were included",
+            "participants were excluded",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory",
+        ],
+    },
+    "claims": {
+        "keywords": [
+            "we found", "our results show", "we demonstrate", "we conclude",
+            "treatment resulted in", "intervention led to", "significant difference",
+            "no significant difference", "p <", "p =", "p < 0.05", "p < 0.01",
+            "effect size", "confidence interval", "odds ratio", "risk ratio",
+            "our findings suggest", "these results indicate",
+        ],
+        "anti_keywords": [
+            "guidance for industry", "regulatory",
+        ],
+    },
+}
+
+
+def _retrieve_field_evidence(markdown: str, field_type: str) -> dict:
+    """Retrieve evidence for a specific field type from document text.
+
+    Returns a dict with:
+        - found: bool (whether relevant text was found)
+        - passages: list[str] (relevant text passages, up to 3)
+        - confidence: float (0-1, how confident we are that this field exists)
+    """
+    text_lower = markdown.lower()
+    patterns = _FIELD_RETRIEVAL_PATTERNS.get(field_type, {})
+
+    keywords = patterns.get("keywords", [])
+    anti_keywords = patterns.get("anti_keywords", [])
+
+    # Check for anti-keywords first (signals this is NOT a clinical trial)
+    anti_count = sum(1 for ak in anti_keywords if ak in text_lower)
+    if anti_count >= 2:
+        return {"found": False, "passages": [], "confidence": 0.0}
+
+    # Find passages containing relevant keywords
+    passages = []
+    matched_keywords = set()
+
+    for kw in keywords:
+        if kw in text_lower:
+            matched_keywords.add(kw)
+            # Extract surrounding context (up to 300 chars around the match)
+            idx = text_lower.find(kw)
+            while idx >= 0 and len(passages) < 5:
+                start = max(0, idx - 100)
+                end = min(len(markdown), idx + len(kw) + 200)
+                passage = markdown[start:end].strip()
+                if passage and passage not in passages:
+                    passages.append(passage)
+                idx = text_lower.find(kw, idx + 1)
+
+    # Calculate confidence based on number of keyword matches
+    if not matched_keywords:
+        return {"found": False, "passages": [], "confidence": 0.0}
+
+    confidence = min(1.0, len(matched_keywords) / 3.0)  # 3+ keywords = high confidence
+
+    return {
+        "found": True,
+        "passages": passages[:3],  # Top 3 most relevant passages
+        "confidence": confidence,
+        "matched_keywords": list(matched_keywords),
+    }
+
+
+def _build_retrieval_hints(markdown: str) -> str:
+    """Build retrieval hints for the extraction prompt.
+
+    For each field type, determines whether relevant evidence exists in the
+    document and includes this information in the prompt. This prevents the
+    LLM from hallucinating fields that have no supporting evidence.
+
+    This is the core of the evidence-guided extraction architecture:
+    retrieval happens BEFORE extraction, not after.
+    """
+    field_types = ["hypotheses", "outcomes", "sample_size", "analyses", "exclusion_criteria", "claims"]
+    hints = ["RETRIEVAL ANALYSIS (evidence search results for each field type):"]
+
+    for field in field_types:
+        result = _retrieve_field_evidence(markdown, field)
+        if result["found"]:
+            keywords = ", ".join(result.get("matched_keywords", [])[:5])
+            hints.append(f"- {field}: FOUND (keywords: {keywords})")
+            if result["passages"]:
+                hints.append(f"  Relevant text: \"{result['passages'][0][:200]}...\"")
+        else:
+            hints.append(f"- {field}: NOT FOUND — set status to 'missing', return empty list")
+
+    hints.append("")
+    hints.append("IMPORTANT: For any field marked NOT FOUND, you MUST return an empty list and set status to 'missing'.")
+    hints.append("Do NOT attempt to extract content for fields where the retrieval found no evidence.")
+    hints.append("")
+
+    return "\n".join(hints)
 
 
 class ContractExtractor:
@@ -273,11 +436,16 @@ class ContractExtractor:
                 f"for LLM context ({parsed.source_path})"
             )
 
+        # Evidence-guided retrieval: determine which fields have evidence BEFORE extraction
+        retrieval_hints = _build_retrieval_hints(markdown_content)
+        logger.info(f"Retrieval hints for {doc_id}:\n{retrieval_hints}")
+
         user_prompt = EXTRACTION_USER_PROMPT.format(
             doc_type=doc_type,
             doc_id=doc_id,
             markdown=markdown_content,
             tables_section=tables_section,
+            retrieval_hints=retrieval_hints,
         )
 
         return self._extract_with_retry(user_prompt, doc_id, doc_type, parsed.markdown, doc_category)
@@ -297,6 +465,7 @@ class ContractExtractor:
                 contract.doc_type = doc_type
                 contract.raw_markdown = raw_markdown
                 contract = self._verify_extraction_evidence(contract)
+                contract = self._enforce_retrieval_results(contract, raw_markdown)
                 contract = self._validate_extraction_sanity(contract, doc_category)
                 logger.info(
                     f"Successfully extracted contract for {doc_id}: "
@@ -444,6 +613,52 @@ class ContractExtractor:
                 ]
                 for h in threshold_hyps:
                     logger.info(f"  Removed threshold-like hypothesis: {h.description[:80]}")
+
+        return contract
+
+    def _enforce_retrieval_results(
+        self, contract: ScientificContract, markdown: str
+    ) -> ScientificContract:
+        """Enforce retrieval results: remove fields that retrieval said weren't found.
+
+        This is the enforcement layer of evidence-guided extraction. Even if the
+        LLM hallucinated content for a field that retrieval determined had no
+        evidence, this method removes it.
+
+        This prevents the scenario where:
+            1. Retrieval says "hypotheses: NOT FOUND"
+            2. LLM ignores this and extracts hypotheses anyway
+            3. Constraint engine compares hallucinated hypotheses → false deviations
+        """
+        field_checks = [
+            ("hypotheses", "hypotheses"),
+            ("outcomes", "outcomes"),
+            ("analyses", "analyses"),
+            ("claims", "claims"),
+            ("exclusion_criteria", "exclusion_criteria"),
+        ]
+
+        for field_type, attr_name in field_checks:
+            result = _retrieve_field_evidence(markdown, field_type)
+            if not result["found"]:
+                current = getattr(contract, attr_name)
+                if current:
+                    logger.info(
+                        f"Retrieval enforcement: clearing {len(current)} {field_type} "
+                        f"(retrieval found no evidence)"
+                    )
+                    setattr(contract, attr_name, [])
+
+        # Special handling for sample_size
+        ss_result = _retrieve_field_evidence(markdown, "sample_size")
+        if not ss_result["found"] and contract.sample_size:
+            # Only clear if sample_size was extracted but retrieval found no evidence
+            if contract.sample_size.planned_n or contract.sample_size.actual_n:
+                logger.info(
+                    "Retrieval enforcement: clearing sample_size "
+                    "(retrieval found no evidence)"
+                )
+                contract.sample_size = None
 
         return contract
 
