@@ -105,7 +105,7 @@ def contract_extractor_node(state: WorkflowState) -> dict:
 
 
 def _needs_llm_extraction(doc: ParsedDocument) -> bool:
-    return doc.parser_name not in ("ctgov_json", "mock")
+    return doc.parser_name not in ("ctgov_json", "mock", "mock_markdown", "mock_json")
 
 
 def _safe_extract(
