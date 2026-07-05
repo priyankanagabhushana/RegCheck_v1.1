@@ -897,7 +897,7 @@ with tab_home:
 # ═══════════════════ DEMO ═══════════════════
 with tab_demo:
     st.markdown("#### Demo with real study data")
-    st.markdown("These use actual registration data from ClinicalTrials.gov and real publication PDFs. No synthetic data.")
+    st.markdown("Registration data is fetched live from ClinicalTrials.gov. Publication data uses local files.")
 
     demo = st.radio("Choose:", [
         "💉 Moderna COVID-19 Vaccine (NCT04470427)",
@@ -916,47 +916,120 @@ with tab_demo:
         the registration JSON and the NEJM publication PDF, then compares them.
         """)
 
-        reg_path = Path("data/study2_moderna_vaccine/registration_NCT04470427.json")
-        pub_path = Path("data/study2_moderna_vaccine/publication_NEJM_Moderna_mRNA1273.pdf")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            with st.expander("📋 Registration (ClinicalTrials.gov JSON)", expanded=False):
-                if reg_path.exists():
-                    import json as _demo_json
-                    with open(reg_path) as f:
-                        _demo_data = _demo_json.load(f)
-                    _demo_proto = _demo_data.get("protocolSection", {})
-                    _demo_ident = _demo_proto.get("identificationModule", {})
-                    st.markdown(f"**NCT ID:** {_demo_ident.get('nctId', '?')}")
-                    st.markdown(f"**Title:** {_demo_ident.get('briefTitle', '?')}")
-                    _demo_out = _demo_proto.get("outcomesModule", {})
-                    st.markdown(f"**Primary outcomes:** {len(_demo_out.get('primaryOutcomes', []))}")
-                    for o in _demo_out.get("primaryOutcomes", []):
-                        st.markdown(f"- {o.get('measure', '?')}")
-        with c2:
-            with st.expander("📄 Publication (NEJM PDF)", expanded=False):
-                if pub_path.exists():
-                    st.markdown("Baden et al. (2021) — Efficacy and Safety of the mRNA-1273 SARS-CoV-2 Vaccine. *New England Journal of Medicine*, 384(5), 403-416.")
-
         if st.button("🔍 Run analysis", type="primary", use_container_width=True, key="btn_demo1"):
-            with st.spinner("Parsing registration JSON and publication PDF..."):
+            with st.spinner("Fetching registration from ClinicalTrials.gov..."):
                 try:
+                    reg_data = fetch_registration("NCT04470427")
+                    reg_md = registration_to_markdown(reg_data)
+                    st.success(f"✅ Fetched: **{reg_data['title'][:80]}**")
+
                     from parsers.ctgov_json_parser import CTGovJSONParser
-                    import tempfile
-                    parser = CTGovJSONParser()
-                    parsed_reg = parser.parse(str(reg_path))
+                    import tempfile, json as _demo_json
+
+                    # Save fetched data as temp JSON for CTGovJSONParser
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+                        _demo_json.dump(reg_data, tmp)
+                        tmp_path = tmp.name
+                    try:
+                        parser = CTGovJSONParser()
+                        parsed_reg = parser.parse(tmp_path)
+                    finally:
+                        os.unlink(tmp_path)
 
                     extractor = ContractExtractor(model=active_model, max_chars=25000)
                     reg = extractor.extract(parsed_reg, doc_type="registration")
-
-                    pub_bytes = pub_path.read_bytes()
-                    pub = extract_contract(pub_bytes, "publication", "pub_Moderna_NEJM", active_model)
-
-                    ledger, cr, rg, pg = run_pipeline(reg, pub)
                 except Exception as e:
-                    st.error(f"Analysis failed: {e}")
+                    st.error(f"Could not fetch registration: {e}")
                     st.stop()
+
+            with st.spinner("Reading publication PDF..."):
+                try:
+                    pub_path = Path("data/study2_moderna_vaccine/publication_NEJM_Moderna_mRNA1273.pdf")
+                    if pub_path.exists():
+                        pub = extract_contract(pub_path.read_bytes(), "publication", "pub_Moderna_NEJM", active_model)
+                    else:
+                        st.warning("Publication PDF not available locally. Using registration only.")
+                        pub = ScientificContract(
+                            doc_id="pub_Moderna_NEJM", doc_type="publication",
+                            title="Efficacy and Safety of the mRNA-1273 SARS-CoV-2 Vaccine",
+                            raw_markdown="",
+                        )
+                except Exception as e:
+                    st.error(f"Could not read publication: {e}")
+                    st.stop()
+
+            with st.spinner("Comparing and finding differences..."):
+                ledger, cr, rg, pg = run_pipeline(reg, pub)
+
+            st.markdown("---")
+            st.markdown("##### Summary")
+            st.markdown(plain_english_summary(ledger, reg, pub))
+
+            st.markdown("##### Comparison")
+            render_comparison_table(reg, pub, cr)
+
+            st.markdown("##### Findings")
+            render_constraints(cr)
+
+            st.markdown("##### Visual comparison")
+            render_graphs(rg, pg)
+
+            with st.expander("📄 Full report"):
+                st.markdown(LedgerGenerator().render_markdown(ledger))
+
+    else:
+        st.markdown("---")
+        st.markdown("##### CheckMate 025: Nivolumab vs Everolimus in Renal-Cell Carcinoma")
+        st.markdown("""
+        **Registration:** [NCT01668784](https://clinicaltrials.gov/study/NCT01668784) on ClinicalTrials.gov
+        **Publication:** Motzer et al. (2015) *Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma*, NEJM
+
+        This is a real Phase 3 oncology trial. The registration has 1 primary outcome
+        (Overall Survival) and 9 secondary outcomes. The system compares the structured
+        registration data against the publication to check for outcome reporting consistency.
+        """)
+
+        if st.button("🔍 Run analysis", type="primary", use_container_width=True, key="btn_demo2"):
+            with st.spinner("Fetching registration from ClinicalTrials.gov..."):
+                try:
+                    reg_data = fetch_registration("NCT01668784")
+                    reg_md = registration_to_markdown(reg_data)
+                    st.success(f"✅ Fetched: **{reg_data['title'][:80]}**")
+
+                    from parsers.ctgov_json_parser import CTGovJSONParser
+                    import tempfile, json as _demo_json
+
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+                        _demo_json.dump(reg_data, tmp)
+                        tmp_path = tmp.name
+                    try:
+                        parser = CTGovJSONParser()
+                        parsed_reg = parser.parse(tmp_path)
+                    finally:
+                        os.unlink(tmp_path)
+
+                    extractor = ContractExtractor(model=active_model, max_chars=25000)
+                    reg = extractor.extract(parsed_reg, doc_type="registration")
+                except Exception as e:
+                    st.error(f"Could not fetch registration: {e}")
+                    st.stop()
+
+            with st.spinner("Reading publication abstract..."):
+                try:
+                    abstract_path = Path("data/study5_checkmate_outcome_switching/publication_abstract_PMID26406148.txt")
+                    abstract_text = abstract_path.read_text() if abstract_path.exists() else ""
+                    pub = ScientificContract(
+                        doc_id="pub_CheckMate_NEJM", doc_type="publication",
+                        title="Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma",
+                        authors=["Motzer RJ", "Escudier B", "McDermott DF", "et al."],
+                        raw_markdown=abstract_text,
+                    )
+                except Exception as e:
+                    st.error(f"Could not read publication: {e}")
+                    st.stop()
+
+            with st.spinner("Comparing and finding differences..."):
+                ledger, cr, rg, pg = run_pipeline(reg, pub)
 
             st.markdown("---")
             st.markdown("##### Summary")
@@ -1055,50 +1128,37 @@ with tab_about:
     st.markdown("#### About RegCheck v1.1")
 
     st.markdown("""
-    RegCheck v1.1 is a prototype that proposes a new internal architecture for
-    [RegCheck](https://arxiv.org/abs/2601.13330), a tool that helps researchers
-    compare study registrations against published papers.
-
-    **The key idea:** Instead of comparing text passages by similarity, extract structured
-    information from both documents and check it against formal rules.
+    **RegCheck v1.1** is a research prototype inspired by [RegCheck](https://arxiv.org/abs/2601.13330).
+    It explores an alternative internal architecture for comparing study registrations with published papers.
+    The goal is to make comparisons more structured, explainable, and easier to trace back to supporting evidence.
     """)
 
-    st.markdown("#### How it works")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("""
-        <div style="background:linear-gradient(135deg, #1e293b 0%, #172033 100%); border:1px solid #334155; border-radius:16px; padding:20px; min-height:130px; box-shadow:0 4px 20px rgba(0,0,0,0.15);">
-            <div style="font-size:0.75rem; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;">RegCheck v1 (original)</div>
-            <div style="font-family:monospace; font-size:0.88rem; color:#e2e8f0; line-height:1.8;">PDF → Retrieve Relevant Passages → LLM Judgement → Report</div>
-            <div style="font-size:0.82rem; color:#64748b; margin-top:12px;">Retrieves the most relevant text for each comparison dimension and asks an LLM to judge consistency.</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown("""
-        <div style="background:linear-gradient(135deg, #1e293b 0%, #172033 100%);
-            border:1px solid transparent; border-radius:16px; padding:20px; min-height:130px;
-            box-shadow:0 4px 20px rgba(96,165,250,0.1); position:relative;">
-            <div style="position:absolute; top:0; left:0; right:0; height:2px;
-                background:linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
-                border-radius:16px 16px 0 0;"></div>
-            <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;
-                background:linear-gradient(135deg, #60a5fa, #a78bfa);
-                -webkit-background-clip:text; -webkit-text-fill-color:transparent;">RegCheck v1.1 (this prototype)</div>
-            <div style="font-family:monospace; font-size:0.88rem; color:#e2e8f0; line-height:1.8;">PDF → Structured Extraction → Evidence-Guided Retrieval → Rules → Graph → Report</div>
-            <div style="font-size:0.82rem; color:#64748b; margin-top:12px;">Builds a structured study representation, then compares fields using deterministic rules.</div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("#### Motivation")
+    st.markdown("""
+    Clinical trial registrations and publications often differ in subtle ways —
+    outcome switches, analysis changes, missing results.
+    The original RegCheck retrieves relevant evidence and asks an LLM to judge consistency.
+    This prototype explores whether compiling documents into structured study representations
+    before comparison can make the reasoning more transparent, reproducible, and easier to explain.
+    """)
 
-    st.markdown("#### Architectural differences")
+    st.markdown("#### Core idea")
+    st.markdown("""
+    > RegCheck v1 retrieves evidence and reasons directly over text.
+    > This prototype explores an alternative approach: building an evidence-backed
+    > structured representation first, then reasoning over that representation using explicit rules.
+    """)
+
+    st.markdown("#### Architectural comparison with the original RegCheck")
     st.markdown("""
     | Aspect | RegCheck v1 | RegCheck v1.1 |
     |---|---|---|
     | **Document representation** | Retrieves relevant text passages | Builds a structured study representation (typed fields) |
     | **Comparison strategy** | LLM judges retrieved evidence | Deterministic rules compare structured fields |
     | **Evidence** | Supporting text excerpts | Structured fields linked back to source evidence |
-    | **Reasoning** | Prompt-guided LLM comparison | Rule-based comparison + graph differencing |
+    | **Reasoning** | Prompt-guided LLM comparison | Rule-based reasoning over structured study representations |
     | **Extensibility** | Add new comparison prompts | Add new rule modules (constraint plugins) |
-    | **Document parsing** | Text-focused parsing (GROBID / DPT-2) | Multimodal parsing (text, tables, and figures via Docling + Vision) |
+    | **Document parsing** | Text-focused parsing | Multimodal parsing (text, tables, and figures) |
     | **Uncertainty** | Reports missing evidence when appropriate | Tracks uncertainty and evidence confidence throughout the pipeline |
     """)
 
@@ -1112,52 +1172,37 @@ with tab_about:
     | **Explainability** | Supporting excerpts | Structured provenance + evidence |
     """)
 
-    st.markdown("#### How PDF reading works")
-    st.markdown("""
-    1. **Docling** reads the text, tables, and identifies images/charts in the PDF
-    2. **DeepSeek Vision** looks at the images and describes what it sees
-    3. Both are combined into one document
-    4. **Evidence-guided retrieval** determines which fields have supporting text
-    5. **DeepSeek** extracts structured data, guided by retrieval results
-    6. The **rule engine** checks the data against 8 formal rules
-    """)
-
-    st.markdown("#### Understanding the pipeline")
-    analogies = [
-        ("#60a5fa", "📄", "Docling + Vision", "The Reader", "Reads the document, highlights tables, photographs charts. Produces a clean version of everything in the PDF."),
-        ("#a78bfa", "🔍", "Evidence Retrieval", "The Search", "Before extracting anything, searches for evidence of each field type. If no evidence exists, the field is marked as missing — not invented."),
-        ("#f472b6", "📋", "Structured Data", "The Form", "Converts free-form text into a structured form: hypotheses, outcomes, methods, sample sizes. Like a tax return for science."),
-        ("#fbbf24", "✓", "Rules", "The Checklist", "Checks 8 clear rules before asking AI to judge. Like a building inspector checking boxes."),
-        ("#4ade80", "📊", "Graph + Report", "The Audit", "Draws a map of each document, compares them, and produces a report showing what was planned, what was reported, and where they differ."),
-    ]
-    for color, icon, step, title, desc in analogies:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg, #1e293b 0%, #172033 100%);
-            border-left:3px solid {color}; border-radius:0 14px 14px 0;
-            padding:18px 22px; margin-bottom:10px; box-shadow:0 2px 12px rgba(0,0,0,0.15);">
-            <div style="font-weight:700; color:{color}; margin-bottom:8px; font-size:0.95rem;">{icon} {step} = {title}</div>
-            <div style="color:#cbd5e1; font-size:0.88rem; line-height:1.65;">{desc}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.divider()
-    st.markdown("#### Scientific Contributions")
+    st.markdown("#### Four core contributions")
 
     contribs = [
-        ("1. Scientific Contract IR", "Converts unstructured documents into typed Pydantic models with full provenance. Every hypothesis, outcome, and analysis becomes a structured field — enabling deterministic comparison instead of fuzzy text similarity."),
-        ("2. Evidence-Guided Extraction", "Retrieval runs BEFORE extraction. Each field type is searched for supporting evidence. Fields without evidence are explicitly marked as missing — preventing the LLM from inventing content."),
-        ("3. Deterministic Constraint Engine", "8 formal rules (C1–C6 + MRI-C1, MRI-C2) evaluate assertions with four-state logic: SATISFIED / VIOLATED / UNCERTAIN / MISSING. The system explicitly reports when data is absent rather than inventing deviations."),
-        ("4. Graph-Based Structural Comparison", "Detects inferential changes beyond semantic similarity. Structural diff finds added/removed nodes and edges. Semantic diff finds inferential drift (ANCOVA→t-test) and evidence gaps."),
-        ("5. Evidence Provenance Chains", "Every deviation links to its source through Claim → Hypothesis → Outcome → Analysis → Evidence. Every finding is fully auditable."),
-        ("6. Multi-Axis Severity Scoring", "Four independent axes: scientific severity (S0–S5), bias risk, evidence quality, and confidence — replacing single-score assessments."),
+        ("1. Evidence-guided structured study representation", "Rather than reasoning directly over retrieved text, documents are compiled into typed study representations. Each field (hypothesis, outcome, analysis) is extracted only when supported by evidence found in the document."),
+        ("2. Deterministic, explainable rule-based comparison", "8 formal rules evaluate assertions with four-state logic: satisfied / violated / uncertain / missing. The system reports when data is absent rather than inventing deviations."),
+        ("3. Evidence provenance and uncertainty", "Every deviation links back to its source evidence. Uncertainty is tracked throughout the pipeline — from extraction through comparison to reporting."),
+        ("4. Multimodal document understanding", "Documents are parsed for text, tables, and figures. Visual content (charts, flowcharts, CONSORT diagrams) is described and incorporated into the structured representation."),
     ]
     for title, desc in contribs:
         st.markdown(f"**{title}** — {desc}")
 
-    st.divider()
-    st.markdown("#### Evaluation")
+    st.markdown("#### Pipeline")
     st.markdown("""
-    Benchmarked against the **COMPARE Trials dataset** (72 human-annotated trials, Goldacre et al. 2019).
+    ```
+    PDF → Multimodal Parsing → Evidence-Guided Retrieval → Structured Extraction → Constraint Engine → Graph Comparison → Report
+    ```
+    """)
+
+    with st.expander("Pipeline details"):
+        st.markdown("""
+        1. **Multimodal Parsing** — Text, tables, and figures are extracted from the PDF using layout-aware parsing and vision models.
+        2. **Evidence-Guided Retrieval** — Before extraction, the system searches for evidence of each field type (hypotheses, outcomes, etc.). Fields without evidence are marked as missing.
+        3. **Structured Extraction** — The document is compiled into a typed study representation with full provenance tracking.
+        4. **Constraint Engine** — 8 formal rules compare the registration against the publication using four-state logic.
+        5. **Graph Comparison** — Structural and semantic differences are detected between the two study representations.
+        6. **Report** — Deviations are scored on four axes (severity, bias risk, evidence quality, confidence) and linked to editorial queries.
+        """)
+
+    st.markdown("#### Preliminary evaluation")
+    st.markdown("""
+    Benchmarked against the COMPARE Trials dataset (72 human-annotated trials, Goldacre et al. 2019).
 
     | Constraint | Precision | Recall | F1 |
     |-----------|-----------|--------|-----|
@@ -1165,8 +1210,13 @@ with tab_about:
     | C4 — Hypothesis Presence | 1.00 | 1.00 | 1.00 |
     | C5 — Claim-Hypothesis Mapping | 1.00 | 1.00 | 1.00 |
     | **Overall** | **0.75** | **1.00** | **0.86** |
-
-    C1 acts as a broad catch-all (recall=1.00 but precision=0.27). Addressing this
-    entanglement is the focus of the next research phase. Run `python main.py eval-cmd`
-    for full per-constraint metrics and ablation study.
     """)
+
+    with st.expander("Evaluation notes"):
+        st.markdown("""
+        - C1 acts as a broad catch-all (recall=1.00 but precision=0.27).
+        - C4 and C5 achieve perfect scores on the COMPARE dataset.
+        - The evaluation tests the comparison pipeline (constraint engine + graph differ) against real-world deviation patterns.
+        - Extraction quality (PDF → structured representation) is a separate evaluation concern.
+        - Addressing C1 precision is the focus of the next research phase.
+        """)

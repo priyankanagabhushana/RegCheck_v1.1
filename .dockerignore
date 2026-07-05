@@ -13,9 +13,7 @@ build/
 .ruff_cache/
 .ipynb_checkpoints/
 data/study1_fda_mri_guidance/
-data/study2_moderna_vaccine/
 data/study3_pfizer_vaccine/
 data/study4_asteroid6_protocol/
-data/study5_checkmate_outcome_switching/
 data/study6_compare_trials_dataset/
 evaluation/__pycache__/
