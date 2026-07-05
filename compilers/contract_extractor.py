@@ -772,11 +772,11 @@ class ContractExtractor:
                 return "regulatory_guidance"
             if "trial" in category or "study" in category:
                 return "clinical_trial"
-            logger.warning(f"Unknown category '{category}', defaulting to 'other'")
-            return "other"
+            logger.warning(f"Unknown category '{category}', defaulting to 'clinical_trial'")
+            return "clinical_trial"
         except Exception as e:
-            logger.warning(f"Document classification failed: {e}, defaulting to 'other'")
-            return "other"
+            logger.warning(f"Document classification failed: {e}, defaulting to 'clinical_trial'")
+            return "clinical_trial"
 
     def _create_non_trial_contract(
         self, doc_id: str, doc_type: str, parsed: ParsedDocument, category: str

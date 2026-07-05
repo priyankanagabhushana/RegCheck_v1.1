@@ -191,9 +191,9 @@ Category:"""
                 elif "guidance" in cat or "regulatory" in cat:
                     doc_category = "regulatory_guidance"
                 else:
-                    doc_category = "other"  # Fail closed
+                    doc_category = "clinical_trial"  # Pre-classifier was uncertain, assume trial
             except Exception:
-                doc_category = "other"  # Fail closed
+                doc_category = "clinical_trial"  # Pre-classifier was uncertain, assume trial
 
         logger.info(f"Document '{doc_id}' classified as: {doc_category}")
         st.info(f"📋 Document classified as **{doc_category.replace('_', ' ').title()}**")
@@ -1007,12 +1007,61 @@ with tab_demo:
                 try:
                     abstract_path = Path("data/study5_checkmate_outcome_switching/publication_abstract_PMID26406148.txt")
                     abstract_text = abstract_path.read_text() if abstract_path.exists() else ""
-                    pub = ScientificContract(
-                        doc_id="pub_CheckMate_NEJM", doc_type="publication",
-                        title="Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma",
-                        authors=["Motzer RJ", "Escudier B", "McDermott DF", "et al."],
-                        raw_markdown=abstract_text,
-                    )
+
+                    if abstract_text:
+                        # Extract structured data from abstract using LLM
+                        from compilers.contract_extractor import ContractExtractor, _build_retrieval_hints, _preclassify_document
+                        retrieval_hints = _build_retrieval_hints(abstract_text)
+                        prompt = f"""Extract structured scientific information from this publication abstract into JSON.
+Text:
+{abstract_text}
+
+{retrieval_hints}
+
+Return a JSON object with: doc_id, doc_type, title, authors,
+hypotheses (list of {{id, description, hypothesis_type, variables, status, evidence}}),
+outcomes (list of {{id, measure, timepoint, outcome_type, description, status, evidence}}),
+sample_size ({{planned_n, actual_n, status, evidence}}),
+exclusion_criteria (list),
+analyses (list of {{id, model, dependent_variable}}),
+claims (list of {{id, text, mapped_hypothesis_id, strength}}).
+Return ONLY valid JSON."""
+                        import litellm, re as _re, json as _json
+                        for attempt in range(3):
+                            try:
+                                resp = litellm.completion(model=active_model, messages=[
+                                    {"role": "system", "content": "Extract structured scientific data. Return only JSON."},
+                                    {"role": "user", "content": prompt},
+                                ], temperature=0.1, response_format={"type": "json_object"})
+                                raw = resp.choices[0].message.content.strip()
+                                if raw.startswith("```"):
+                                    raw = _re.sub(r'^```\w*\n?', '', raw)
+                                    raw = _re.sub(r'\n?```$', '', raw)
+                                data = _json.loads(raw)
+                                pub = ScientificContract.model_validate(data)
+                                pub.doc_id = "pub_CheckMate_NEJM"
+                                pub.doc_type = "publication"
+                                pub.raw_markdown = abstract_text
+                                pub.title = "Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma"
+                                # Apply evidence verification
+                                extractor = ContractExtractor(model=active_model)
+                                pub = extractor._verify_extraction_evidence(pub)
+                                break
+                            except Exception as e:
+                                if attempt == 2:
+                                    # Fallback: create contract from abstract text
+                                    pub = ScientificContract(
+                                        doc_id="pub_CheckMate_NEJM", doc_type="publication",
+                                        title="Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma",
+                                        authors=["Motzer RJ", "Escudier B", "McDermott DF", "et al."],
+                                        raw_markdown=abstract_text,
+                                    )
+                    else:
+                        pub = ScientificContract(
+                            doc_id="pub_CheckMate_NEJM", doc_type="publication",
+                            title="Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma",
+                            raw_markdown="",
+                        )
                 except Exception as e:
                     st.error(f"Could not read publication: {e}")
                     st.stop()
