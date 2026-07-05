@@ -28,6 +28,7 @@ from schemas.ir import (
     DomainSpecificParameters,
     EvidenceSpan,
     ExclusionCriterion,
+    FieldStatus,
     Hypothesis,
     HypothesisType,
     Outcome,
@@ -36,6 +37,7 @@ from schemas.ir import (
     ScientificClaim,
     ScientificContract,
     ScientificAnalysis as StatisticalAnalysis,
+    UncertaintyFlag,
 )
 
 logger = logging.getLogger(__name__)
@@ -875,5 +877,184 @@ def create_mock_contract(doc_id: str, doc_type: str) -> ScientificContract:
         ],
         claims=[],
         domain_params=DomainSpecificParameters(),
+        compilation_timestamp=datetime.now(),
+    )
+
+
+def ctgov_json_to_contract(json_data: dict, doc_type: str = "registration") -> ScientificContract:
+    """Convert ClinicalTrials.gov JSON directly to ScientificContract — no LLM.
+
+    This is the architecturally correct path for CT.gov data:
+        CT.gov JSON → ScientificContract
+
+    Instead of:
+        CT.gov JSON → markdown → LLM extraction → ScientificContract
+
+    The JSON already contains structured outcomes, eligibility, enrollment, and arms.
+    Extracting them deterministically eliminates LLM hallucination on the registration side.
+
+    This means the registration ScientificContract is always accurate,
+    and the LLM is only used for the publication (unstructured PDF).
+    """
+    from datetime import datetime
+    import re as _re
+
+    proto = json_data.get("protocolSection", {})
+    ident = proto.get("identificationModule", {})
+    design = proto.get("designModule", {})
+    outcomes = proto.get("outcomesModule", {})
+    eligibility = proto.get("eligibilityModule", {})
+    arms = proto.get("armsInterventionsModule", {})
+    status = proto.get("statusModule", {})
+    description = proto.get("descriptionModule", {})
+
+    nct_id = ident.get("nctId", "")
+    title = ident.get("officialTitle") or ident.get("briefTitle", "")
+
+    # ── Outcomes ──
+    extracted_outcomes = []
+    outcome_idx = 0
+
+    for o in outcomes.get("primaryOutcomes", []):
+        outcome_idx += 1
+        measure = o.get("measure", "")
+        timepoint = o.get("timeFrame", "")
+        desc = o.get("description", "")
+        extracted_outcomes.append(Outcome(
+            id=f"O{outcome_idx}",
+            measure=measure,
+            timepoint=timepoint or None,
+            outcome_type=OutcomeType.PRIMARY,
+            description=desc or None,
+            evidence=[EvidenceSpan(
+                text=f"{measure}" + (f" ({timepoint})" if timepoint else ""),
+                source_doc="registration",
+                section="Primary Outcomes",
+            )],
+            status=FieldStatus.PRESENT,
+        ))
+
+    for o in outcomes.get("secondaryOutcomes", []):
+        outcome_idx += 1
+        measure = o.get("measure", "")
+        timepoint = o.get("timeFrame", "")
+        desc = o.get("description", "")
+        extracted_outcomes.append(Outcome(
+            id=f"O{outcome_idx}",
+            measure=measure,
+            timepoint=timepoint or None,
+            outcome_type=OutcomeType.SECONDARY,
+            description=desc or None,
+            evidence=[EvidenceSpan(
+                text=f"{measure}" + (f" ({timepoint})" if timepoint else ""),
+                source_doc="registration",
+                section="Secondary Outcomes",
+            )],
+            status=FieldStatus.PRESENT,
+        ))
+
+    # ── Sample Size ──
+    enroll = design.get("enrollmentInfo", {})
+    sample_size = None
+    if enroll.get("count"):
+        sample_size = SampleSize(
+            planned_n=enroll["count"],
+            evidence=[EvidenceSpan(
+                text=f"Enrollment: {enroll['count']}",
+                source_doc="registration",
+                section="Enrollment",
+            )],
+            status=FieldStatus.PRESENT,
+        )
+
+    # ── Eligibility Criteria ──
+    criteria_text = eligibility.get("eligibilityCriteria", "")
+    exclusion_criteria = []
+    if criteria_text:
+        # Split into inclusion/exclusion sections
+        in_section = False
+        ex_section = False
+        current_items = []
+
+        for line in criteria_text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            lower = line.lower()
+            if "inclusion criteria" in lower:
+                in_section = True
+                ex_section = False
+                continue
+            if "exclusion criteria" in lower:
+                in_section = False
+                ex_section = True
+                continue
+            if line.startswith("*") or line.startswith("-"):
+                item = line.lstrip("*- ").strip()
+                if item:
+                    criterion_type = "inclusion" if in_section else ("exclusion" if ex_section else "exclusion")
+                    idx = len(exclusion_criteria) + 1
+                    exclusion_criteria.append(ExclusionCriterion(
+                        id=f"EC{idx}",
+                        description=item[:500],
+                        criterion_type=criterion_type,
+                        evidence=[EvidenceSpan(
+                            text=item[:300],
+                            source_doc="registration",
+                            section="Eligibility Criteria",
+                        )],
+                    ))
+
+    # ── Hypotheses (from primary outcomes — CT.gov doesn't have explicit hypotheses) ──
+    hypotheses = []
+    for i, o in enumerate(extracted_outcomes):
+        if o.outcome_type == OutcomeType.PRIMARY:
+            hypotheses.append(Hypothesis(
+                id=f"H{i+1}",
+                description=f"The intervention will show a statistically significant effect on: {o.measure}",
+                hypothesis_type=HypothesisType.PRIMARY,
+                variables=[o.measure],
+                direction="two-sided",
+                evidence=o.evidence,
+                status=FieldStatus.PRESENT,
+            ))
+
+    # ── Build markdown from structured data ──
+    md_parts = [f"# Study Registration: {nct_id}", ""]
+    md_parts.append(f"## Title\n{title}")
+    md_parts.append(f"\n## Status: {status.get('overallStatus', 'Unknown')}")
+    md_parts.append(f"Study Type: {design.get('studyType', 'Unknown')}")
+    md_parts.append(f"Phase: {', '.join(design.get('phases', ['N/A']))}")
+    if enroll.get("count"):
+        md_parts.append(f"\n## Planned Enrollment: {enroll['count']}")
+    if outcomes.get("primaryOutcomes"):
+        md_parts.append("\n## Primary Outcomes")
+        for i, o in enumerate(outcomes["primaryOutcomes"], 1):
+            md_parts.append(f"{i}. **{o.get('measure', '?')}**")
+            if o.get("timeFrame"):
+                md_parts.append(f"   Time Frame: {o['timeFrame']}")
+    if outcomes.get("secondaryOutcomes"):
+        md_parts.append("\n## Secondary Outcomes")
+        for i, o in enumerate(outcomes["secondaryOutcomes"], 1):
+            md_parts.append(f"{i}. **{o.get('measure', '?')}**")
+    if criteria_text:
+        md_parts.append(f"\n## Eligibility Criteria\n{criteria_text[:3000]}")
+    raw_markdown = "\n".join(md_parts)
+
+    return ScientificContract(
+        doc_id=nct_id or f"{doc_type}_ctgov",
+        doc_type=doc_type,
+        title=title,
+        registration_id=nct_id,
+        hypotheses=hypotheses,
+        outcomes=extracted_outcomes,
+        sample_size=sample_size,
+        exclusion_criteria=exclusion_criteria,
+        analyses=[],
+        claims=[],
+        domain_params=DomainSpecificParameters(),
+        raw_markdown=raw_markdown,
+        extraction_confidence=1.0,
+        overall_uncertainty=UncertaintyFlag(is_uncertain=False),
         compilation_timestamp=datetime.now(),
     )

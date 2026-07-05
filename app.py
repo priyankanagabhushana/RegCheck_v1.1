@@ -308,27 +308,11 @@ def extract_contract_from_json(json_bytes, doc_type, doc_id, model):
 
     data = json.loads(json_bytes)
 
-    # Check if this is CT.gov format
+    # Check if this is CT.gov format — use direct conversion (no LLM)
     if "protocolSection" in data:
-        logger.info(f"Detected CT.gov JSON format for {doc_id}")
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-            json.dump(data, tmp)
-            tmp_path = tmp.name
-        try:
-            parser = CTGovJSONParser()
-            parsed = parser.parse(tmp_path)
-        finally:
-            os.unlink(tmp_path)
-
-        # CT.gov JSON is already structured — extract directly
-        extractor = ContractExtractor(model=model, max_chars=50000)
-        contract = extractor.extract(parsed, doc_type=doc_type)
-        # Override doc_id to use the NCT ID from the JSON
-        nct_id = data.get("protocolSection", {}).get("identificationModule", {}).get("nctId", "")
-        if nct_id:
-            contract.doc_id = nct_id
-            contract.registration_id = nct_id
+        logger.info(f"Detected CT.gov JSON format for {doc_id}, using direct conversion")
+        from compilers.contract_extractor import ctgov_json_to_contract
+        contract = ctgov_json_to_contract(data, doc_type=doc_type)
         return contract
 
     # Generic JSON — convert to markdown for LLM extraction
@@ -843,26 +827,12 @@ with tab_home:
                     with st.spinner(f"Fetching {nct_id} from ClinicalTrials.gov..."):
                         try:
                             reg_data = fetch_registration(nct_id)
-                            reg_md = registration_to_markdown(reg_data)
                             st.success(f"✅ Fetched: **{reg_data['title'][:80]}**")
-                            import litellm, json as _json, re as _re
-                            prompt = f"Extract structured scientific info from this registration into JSON.\n{reg_md[:15000]}\nReturn JSON with: doc_id, doc_type, title, authors, hypotheses (list), outcomes (list), sample_size, exclusion_criteria (list), analyses (list). Return ONLY valid JSON."
-                            for attempt in range(3):
-                                try:
-                                    resp = litellm.completion(model=active_model, messages=[
-                                        {"role": "system", "content": "Extract structured data. Return only JSON."},
-                                        {"role": "user", "content": prompt},
-                                    ], temperature=0.1, response_format={"type": "json_object"})
-                                    raw = resp.choices[0].message.content.strip()
-                                    if raw.startswith("```"):
-                                        raw = _re.sub(r'^```\w*\n?', '', raw)
-                                        raw = _re.sub(r'\n?```$', '', raw)
-                                    data = _json.loads(raw)
-                                    reg_contract = ScientificContract.model_validate(data)
-                                    reg_contract.doc_id = nct_id
-                                    reg_contract.doc_type = "registration"
-                                except Exception as e:
-                                    if attempt == 2: st.error(f"Extraction failed: {e}")
+
+                            # Direct conversion: CT.gov JSON → ScientificContract (no LLM)
+                            from compilers.contract_extractor import ctgov_json_to_contract
+                            reg_contract = ctgov_json_to_contract(reg_data, doc_type="registration")
+                            st.caption(f"Extracted {len(reg_contract.outcomes)} outcomes from registration")
                         except Exception as e:
                             st.error(f"Could not fetch {nct_id}: {e}")
             if doi_input:
@@ -920,24 +890,12 @@ with tab_demo:
             with st.spinner("Fetching registration from ClinicalTrials.gov..."):
                 try:
                     reg_data = fetch_registration("NCT04470427")
-                    reg_md = registration_to_markdown(reg_data)
                     st.success(f"✅ Fetched: **{reg_data['title'][:80]}**")
 
-                    from parsers.ctgov_json_parser import CTGovJSONParser
-                    import tempfile, json as _demo_json
-
-                    # Save fetched data as temp JSON for CTGovJSONParser
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-                        _demo_json.dump(reg_data, tmp)
-                        tmp_path = tmp.name
-                    try:
-                        parser = CTGovJSONParser()
-                        parsed_reg = parser.parse(tmp_path)
-                    finally:
-                        os.unlink(tmp_path)
-
-                    extractor = ContractExtractor(model=active_model, max_chars=25000)
-                    reg = extractor.extract(parsed_reg, doc_type="registration")
+                    # Direct conversion: CT.gov JSON → ScientificContract (no LLM)
+                    from compilers.contract_extractor import ctgov_json_to_contract
+                    reg = ctgov_json_to_contract(reg_data, doc_type="registration")
+                    st.caption(f"Extracted {len(reg.outcomes)} outcomes, {len(reg.hypotheses)} hypotheses from registration")
                 except Exception as e:
                     st.error(f"Could not fetch registration: {e}")
                     st.stop()
@@ -993,23 +951,12 @@ with tab_demo:
             with st.spinner("Fetching registration from ClinicalTrials.gov..."):
                 try:
                     reg_data = fetch_registration("NCT01668784")
-                    reg_md = registration_to_markdown(reg_data)
                     st.success(f"✅ Fetched: **{reg_data['title'][:80]}**")
 
-                    from parsers.ctgov_json_parser import CTGovJSONParser
-                    import tempfile, json as _demo_json
-
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-                        _demo_json.dump(reg_data, tmp)
-                        tmp_path = tmp.name
-                    try:
-                        parser = CTGovJSONParser()
-                        parsed_reg = parser.parse(tmp_path)
-                    finally:
-                        os.unlink(tmp_path)
-
-                    extractor = ContractExtractor(model=active_model, max_chars=25000)
-                    reg = extractor.extract(parsed_reg, doc_type="registration")
+                    # Direct conversion: CT.gov JSON → ScientificContract (no LLM)
+                    from compilers.contract_extractor import ctgov_json_to_contract
+                    reg = ctgov_json_to_contract(reg_data, doc_type="registration")
+                    st.caption(f"Extracted {len(reg.outcomes)} outcomes, {len(reg.hypotheses)} hypotheses from registration")
                 except Exception as e:
                     st.error(f"Could not fetch registration: {e}")
                     st.stop()
