@@ -25,9 +25,6 @@ COPY app.py .
 COPY auth.py .
 COPY __init__.py .
 COPY BLUEPRINT.md .
-COPY PITCH.md .
-COPY POSITION_PAPER.md .
-COPY SIMPLE_EXPLANATION.md .
 
 RUN pip install --no-cache-dir \
     pydantic>=2.0 \
