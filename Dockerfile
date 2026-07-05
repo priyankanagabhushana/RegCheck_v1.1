@@ -22,9 +22,7 @@ COPY data/study2_moderna_vaccine/ data/study2_moderna_vaccine/
 COPY data/study5_checkmate_outcome_switching/ data/study5_checkmate_outcome_switching/
 COPY main.py .
 COPY app.py .
-COPY auth.py .
 COPY __init__.py .
-COPY BLUEPRINT.md .
 
 RUN pip install --no-cache-dir \
     pydantic>=2.0 \

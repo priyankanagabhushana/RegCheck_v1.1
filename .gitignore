@@ -10,3 +10,5 @@ build/
 POSITION_PAPER.md
 PITCH.md
 SIMPLE_EXPLANATION.md
+BLUEPRINT.md
+auth.py

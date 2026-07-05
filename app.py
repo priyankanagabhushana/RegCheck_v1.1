@@ -64,8 +64,8 @@ if not check_auth():
             submitted = st.form_submit_button("Sign in", use_container_width=True, type="primary")
             if submitted:
                 import os as _os
-                expected_user = _os.environ.get("REGCHECK_USERNAME", "regcheck")
-                expected_pass = _os.environ.get("REGCHECK_PASSWORD", "regcheck")
+                expected_user = _os.environ.get("REGCHECK_USERNAME", "")
+                expected_pass = _os.environ.get("REGCHECK_PASSWORD", "")
                 if username == expected_user and password == expected_pass:
                     st.session_state.authenticated = True
                     st.rerun()
