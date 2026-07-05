@@ -6,6 +6,7 @@ Docling + DeepSeek Vision for PDF parsing with image/flowchart understanding.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 import plotly.graph_objects as go
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="RegCheck v1.1 — Scientific Integrity Engine",
@@ -287,6 +290,174 @@ Return ONLY valid JSON."""
                 prompt += f"\n\nPrevious error: {e}. Fix and return valid JSON."
     finally:
         os.unlink(tmp_path)
+
+
+def extract_contract_from_json(json_bytes, doc_type, doc_id, model):
+    """Extract a ScientificContract from a JSON file.
+
+    Handles two JSON formats:
+    1. ClinicalTrials.gov API v2 JSON (has 'protocolSection' key)
+       → Uses CTGovJSONParser for structured markdown conversion
+    2. Generic JSON (metadata, abstracts, etc.)
+       → Converts to markdown and extracts via LLM
+
+    For CT.gov JSON, the structured fields (outcomes, eligibility, arms)
+    are already typed, so the LLM extraction is more reliable than from PDF.
+    """
+    import json
+    from parsers.ctgov_json_parser import CTGovJSONParser
+
+    data = json.loads(json_bytes)
+
+    # Check if this is CT.gov format
+    if "protocolSection" in data:
+        logger.info(f"Detected CT.gov JSON format for {doc_id}")
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            json.dump(data, tmp)
+            tmp_path = tmp.name
+        try:
+            parser = CTGovJSONParser()
+            parsed = parser.parse(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+        # CT.gov JSON is already structured — extract directly
+        extractor = ContractExtractor(model=model, max_chars=50000)
+        contract = extractor.extract(parsed, doc_type=doc_type)
+        # Override doc_id to use the NCT ID from the JSON
+        nct_id = data.get("protocolSection", {}).get("identificationModule", {}).get("nctId", "")
+        if nct_id:
+            contract.doc_id = nct_id
+            contract.registration_id = nct_id
+        return contract
+
+    # Generic JSON — convert to markdown for LLM extraction
+    logger.info(f"Generic JSON format for {doc_id}, converting to markdown")
+
+    # Build markdown from JSON content
+    md_parts = [f"# Document: {doc_id}", ""]
+
+    # Try common JSON structures
+    if "title" in data:
+        md_parts.append(f"## Title\n{data['title']}")
+    if "abstract" in data:
+        md_parts.append(f"## Abstract\n{data['abstract']}")
+    if "authors" in data:
+        if isinstance(data["authors"], list):
+            authors = ", ".join(
+                a if isinstance(a, str) else a.get("family", str(a))
+                for a in data["authors"]
+            )
+            md_parts.append(f"## Authors\n{authors}")
+    if "message" in data and "abstract" in data.get("message", {}):
+        md_parts.append(f"## Abstract\n{data['message']['abstract']}")
+    if "description" in data:
+        md_parts.append(f"## Description\n{data['description']}")
+
+    # Include any string values as context
+    for key, value in data.items():
+        if isinstance(value, str) and len(value) > 50 and key not in ("title", "abstract", "description"):
+            md_parts.append(f"## {key.replace('_', ' ').title()}\n{value}")
+
+    markdown = "\n\n".join(md_parts)
+
+    if len(markdown) < 100:
+        st.warning("JSON file has very little text content. Extraction may be limited.")
+
+    # Use the same classification + extraction pipeline as PDFs
+    from datetime import datetime
+    from schemas.ir import UncertaintyFlag, DomainSpecificParameters
+
+    doc_category = _preclassify_document(markdown)
+
+    if doc_category is None:
+        # Try LLM classification
+        try:
+            import litellm
+            resp = litellm.completion(model=model, messages=[
+                {"role": "system", "content": "Classify documents. Return exactly one word."},
+                {"role": "user", "content": f"Classify: clinical_trial, regulatory_guidance, research_protocol, or other.\n\n{markdown[:3000]}\n\nCategory:"},
+            ], temperature=0.0, max_tokens=10)
+            cat = resp.choices[0].message.content.strip().lower()
+            cat = cat.replace("-", "_").replace(" ", "_")
+            if cat in ("clinical_trial", "regulatory_guidance", "research_protocol", "other"):
+                doc_category = cat
+            else:
+                doc_category = "other"
+        except Exception:
+            doc_category = "other"
+
+    logger.info(f"JSON document '{doc_id}' classified as: {doc_category}")
+
+    if doc_category != "clinical_trial":
+        return ScientificContract(
+            doc_id=doc_id, doc_type=doc_type,
+            title=f"{doc_category.replace('_', ' ').title()}: {doc_id}",
+            authors=[], hypotheses=[], outcomes=[], analyses=[],
+            claims=[], exclusion_criteria=[], sample_size=None,
+            domain_params=DomainSpecificParameters(),
+            raw_markdown=markdown,
+            extraction_confidence=0.0,
+            overall_uncertainty=UncertaintyFlag(
+                is_uncertain=True,
+                reason=f"Document classified as '{doc_category}', not a clinical trial.",
+            ),
+            compilation_timestamp=datetime.now(),
+        )
+
+    # Extract from markdown
+    extractor = ContractExtractor(model=model, max_chars=50000)
+
+    from compilers.contract_extractor import _build_retrieval_hints
+    retrieval_hints = _build_retrieval_hints(markdown[:50000])
+
+    prompt = f"""Extract structured scientific information from this {doc_type} into JSON.
+Document text:
+{markdown[:50000]}
+
+{retrieval_hints}
+
+Return a JSON object with: doc_id, doc_type, title, authors,
+hypotheses (list of {{id, description, hypothesis_type, variables, status, evidence: [{{text, source_doc, section}}]}}),
+outcomes (list of {{id, measure, timepoint, outcome_type, description, status, evidence: [{{text, source_doc, section}}]}}),
+sample_size ({{planned_n, actual_n, power_analysis, status, evidence: [{{text, source_doc, section}}]}}),
+exclusion_criteria (list of {{id, description, criterion_type}}),
+analyses (list of {{id, model, dependent_variable, covariates}}),
+claims (list of {{id, text, mapped_hypothesis_id, strength}}).
+
+status field: "present" (extracted from doc), "missing" (absent), "low_evidence" (weak evidence), "not_applicable" (doesn't apply)
+
+CRITICAL RULES:
+- Every hypothesis, outcome, and sample_size MUST have at least one evidence span with exact text from the document.
+- If the retrieval analysis says a field is NOT FOUND, set status to "missing" and return empty list [].
+- Tables of thresholds or limits are NOT hypotheses.
+
+IMPORTANT: variables must be a list of plain strings, not dicts.
+Return ONLY valid JSON."""
+    import litellm, re
+    for attempt in range(3):
+        try:
+            resp = litellm.completion(model=model, messages=[
+                {"role": "system", "content": "Extract structured scientific data. Return only JSON."},
+                {"role": "user", "content": prompt},
+            ], temperature=0.1, response_format={"type": "json_object"})
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r'^```\w*\n?', '', raw)
+                raw = re.sub(r'\n?```$', '', raw)
+            data = json.loads(raw)
+            contract = ScientificContract.model_validate(data)
+            contract.doc_id = doc_id
+            contract.doc_type = doc_type
+            contract.raw_markdown = markdown
+            contract = extractor._verify_extraction_evidence(contract)
+            contract = extractor._enforce_retrieval_results(contract, markdown[:50000])
+            contract = extractor._validate_extraction_sanity(contract, doc_category)
+            return contract
+        except Exception as e:
+            if attempt == 2: raise
+            prompt += f"\n\nPrevious error: {e}. Fix and return valid JSON."
 
 
 def build_graph_fig(G, title):
@@ -617,32 +788,43 @@ with tab_home:
         st.error("API key not configured. Contact the administrator.")
         st.stop()
 
-    input_tab1, input_tab2 = st.tabs(["📄 Upload PDFs", "🔗 Use DOI or ClinicalTrials.gov ID"])
+    input_tab1, input_tab2 = st.tabs(["📄 Upload Files", "🔗 Use DOI or ClinicalTrials.gov ID"])
 
     with input_tab1:
+        st.markdown("Upload **PDF** or **JSON** (ClinicalTrials.gov format) files for registration and publication.")
         c1, c2 = st.columns(2)
         with c1:
-            reg_file = st.file_uploader("📄 Registration (the plan)", type=["pdf"], key="reg_home")
+            reg_file = st.file_uploader("📋 Registration (the plan)", type=["pdf", "json"], key="reg_home")
         with c2:
-            pub_file = st.file_uploader("📄 Publication (the results)", type=["pdf"], key="pub_home")
+            pub_file = st.file_uploader("📄 Publication (the results)", type=["pdf", "json"], key="pub_home")
 
         if reg_file and pub_file:
-            if st.button("🔍 Analyze PDFs", type="primary", use_container_width=True, key="btn_pdf"):
+            button_label = "🔍 Analyze Files"
+            if st.button(button_label, type="primary", use_container_width=True, key="btn_pdf"):
                 reg_bytes = reg_file.read()
                 pub_bytes = pub_file.read()
+                reg_is_json = reg_file.name.lower().endswith(".json")
+                pub_is_json = pub_file.name.lower().endswith(".json")
+
                 with st.spinner("Reading registration..."):
                     try:
-                        reg_contract = extract_contract(reg_bytes, "registration", f"reg_{reg_file.name}", active_model)
+                        if reg_is_json:
+                            reg_contract = extract_contract_from_json(reg_bytes, "registration", f"reg_{reg_file.name}", active_model)
+                        else:
+                            reg_contract = extract_contract(reg_bytes, "registration", f"reg_{reg_file.name}", active_model)
                     except Exception as e:
                         st.error(f"Could not read registration: {e}"); st.stop()
                 with st.spinner("Reading publication..."):
                     try:
-                        pub_contract = extract_contract(pub_bytes, "publication", f"pub_{pub_file.name}", active_model)
+                        if pub_is_json:
+                            pub_contract = extract_contract_from_json(pub_bytes, "publication", f"pub_{pub_file.name}", active_model)
+                        else:
+                            pub_contract = extract_contract(pub_bytes, "publication", f"pub_{pub_file.name}", active_model)
                     except Exception as e:
                         st.error(f"Could not read publication: {e}"); st.stop()
                 _run_and_display(reg_contract, pub_contract)
         else:
-            st.info("Upload both documents to begin.")
+            st.info("Upload both documents to begin. Supports PDF and ClinicalTrials.gov JSON.")
 
     with input_tab2:
         st.markdown("Fetch registration data automatically from **ClinicalTrials.gov** or paper metadata from a **DOI**.")
@@ -651,7 +833,7 @@ with tab_home:
             nct_input = st.text_input("ClinicalTrials.gov ID or URL", placeholder="e.g. NCT01234567", key="nct_input")
         with c2:
             doi_input = st.text_input("Publication DOI", placeholder="e.g. 10.1000/xyz123", key="doi_input")
-        pub_file_doi = st.file_uploader("📄 Upload publication PDF", type=["pdf"], key="pub_doi")
+        pub_file_doi = st.file_uploader("📄 Upload publication (PDF or JSON)", type=["pdf", "json"], key="pub_doi")
 
         if st.button("🔍 Fetch and Analyze", type="primary", use_container_width=True, key="btn_doi"):
             reg_contract = None
@@ -696,7 +878,11 @@ with tab_home:
             if pub_file_doi:
                 with st.spinner("Reading publication..."):
                     try:
-                        pub_contract = extract_contract(pub_file_doi.read(), "publication", f"pub_{pub_file_doi.name}", active_model)
+                        pub_bytes = pub_file_doi.read()
+                        if pub_file_doi.name.lower().endswith(".json"):
+                            pub_contract = extract_contract_from_json(pub_bytes, "publication", f"pub_{pub_file_doi.name}", active_model)
+                        else:
+                            pub_contract = extract_contract(pub_bytes, "publication", f"pub_{pub_file_doi.name}", active_model)
                     except Exception as e:
                         st.error(f"Could not read publication: {e}")
             if reg_contract and pub_contract:
