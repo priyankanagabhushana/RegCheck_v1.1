@@ -513,20 +513,33 @@ def _find_quote(text, keywords, max_len=200):
         return None
     text_lower = text.lower()
     for kw in keywords:
+        if len(kw) < 3:
+            continue
         idx = text_lower.find(kw.lower())
         if idx >= 0:
+            # Find sentence boundaries
             start = max(0, text.rfind('.', 0, idx) + 1)
             end = text.find('.', idx)
-            if end < 0: end = min(len(text), idx + max_len)
-            else: end += 1
+            if end < 0:
+                end = min(len(text), idx + max_len)
+            else:
+                end += 1
             quote = text[start:end].strip()
-            if len(quote) > max_len: quote = quote[:max_len] + "..."
-            return quote
+            if len(quote) > max_len:
+                quote = quote[:max_len] + "..."
+            # Strip markdown headers and formatting
+            import re as _re
+            quote = _re.sub(r'^#+\s+', '', quote, flags=_re.MULTILINE)
+            quote = _re.sub(r'\*\*([^*]+)\*\*', r'\1', quote)
+            quote = _re.sub(r'\n+', ' ', quote)
+            quote = quote.strip()
+            if len(quote) > 10:
+                return quote
     return None
 
 
 def render_comparison_table(reg_contract, pub_contract, cr):
-    """Render comparison table with quotes using st.table."""
+    """Render comparison table using st.dataframe (no markdown rendering)."""
     import pandas as pd
     reg_text = getattr(reg_contract, 'raw_markdown', '') or ''
     pub_text = getattr(pub_contract, 'raw_markdown', '') or ''
@@ -536,35 +549,64 @@ def render_comparison_table(reg_contract, pub_contract, cr):
     reg_ss = f"N={reg_contract.sample_size.planned_n}" if reg_contract.sample_size and reg_contract.sample_size.planned_n else "Not specified"
     pub_ss = f"N={pub_contract.sample_size.actual_n or pub_contract.sample_size.planned_n}" if pub_contract.sample_size else "Not specified"
     ss_ok = not (reg_contract.sample_size and pub_contract.sample_size and pub_contract.sample_size.actual_n and reg_contract.sample_size.planned_n and pub_contract.sample_size.actual_n < reg_contract.sample_size.planned_n * 0.8)
-    reg_q = _find_quote(reg_text, ["sample size", "enrollment", "participants", "N="])
-    pub_q = _find_quote(pub_text, ["sample size", "enrollment", "participants", "completed", "N="])
-    rows.append({"Dimension": "Sample size", "📋 Registration": reg_ss + (f'\n"{reg_q}"' if reg_q else ""), "📄 Publication": pub_ss + (f'\n"{pub_q}"' if pub_q else ""), "Status": "✅ OK" if ss_ok else "❌ Deviation"})
+    reg_q = _find_quote(reg_text, ["sample size", "enrollment", "participants"])
+    pub_q = _find_quote(pub_text, ["sample size", "enrollment", "participants", "completed"])
+    rows.append({
+        "Dimension": "Sample size",
+        "Registration": reg_ss + (f'\n"{reg_q}"' if reg_q else ""),
+        "Publication": pub_ss + (f'\n"{pub_q}"' if pub_q else ""),
+        "Status": "✅ OK" if ss_ok else "❌ Deviation"
+    })
 
     # Primary outcomes
     reg_out = ", ".join(o.measure for o in reg_contract.get_primary_outcomes()) or "Not specified"
     pub_out = ", ".join(o.measure for o in pub_contract.get_primary_outcomes()) or "Not specified"
     reg_q = _find_quote(reg_text, ["primary outcome", reg_out[:15]] if reg_out != "Not specified" else ["primary outcome"])
     pub_q = _find_quote(pub_text, ["primary outcome", pub_out[:15]] if pub_out != "Not specified" else ["primary outcome"])
-    rows.append({"Dimension": "Primary outcome", "📋 Registration": reg_out + (f'\n"{reg_q}"' if reg_q else ""), "📄 Publication": pub_out + (f'\n"{pub_q}"' if pub_q else ""), "Status": "✅ OK" if reg_out.lower() == pub_out.lower() else "❌ Deviation"})
+    # Truncate long outcome lists for display
+    reg_display = reg_out if len(reg_out) < 150 else reg_out[:147] + "..."
+    pub_display = pub_out if len(pub_out) < 150 else pub_out[:147] + "..."
+    rows.append({
+        "Dimension": "Primary outcome",
+        "Registration": reg_display + (f'\n"{reg_q}"' if reg_q else ""),
+        "Publication": pub_display + (f'\n"{pub_q}"' if pub_q else ""),
+        "Status": "✅ OK" if reg_out.lower() == pub_out.lower() else "❌ Deviation"
+    })
 
     # Statistical models
     reg_models = ", ".join(a.model for a in reg_contract.analyses) or "Not specified"
     pub_models = ", ".join(a.model for a in pub_contract.analyses) or "Not specified"
     reg_q = _find_quote(reg_text, ["analysis", "ancova", "regression", "t-test", reg_models[:10]])
     pub_q = _find_quote(pub_text, ["analysis", "ancova", "regression", "t-test", pub_models[:10]])
-    rows.append({"Dimension": "Statistical model", "📋 Registration": reg_models + (f'\n"{reg_q}"' if reg_q else ""), "📄 Publication": pub_models + (f'\n"{pub_q}"' if pub_q else ""), "Status": "✅ OK" if reg_models.lower() == pub_models.lower() else "❌ Deviation"})
+    rows.append({
+        "Dimension": "Statistical model",
+        "Registration": reg_models + (f'\n"{reg_q}"' if reg_q else ""),
+        "Publication": pub_models + (f'\n"{pub_q}"' if pub_q else ""),
+        "Status": "✅ OK" if reg_models.lower() == pub_models.lower() else "❌ Deviation"
+    })
 
     # Exclusion criteria
     reg_excl = str(len(reg_contract.exclusion_criteria))
     pub_excl = str(len(pub_contract.exclusion_criteria))
-    rows.append({"Dimension": "Exclusion criteria", "📋 Registration": f"{reg_excl} criteria", "📄 Publication": f"{pub_excl} criteria", "Status": "✅ OK" if reg_excl == pub_excl else "❌ Deviation"})
+    rows.append({
+        "Dimension": "Exclusion criteria",
+        "Registration": f"{reg_excl} criteria",
+        "Publication": f"{pub_excl} criteria",
+        "Status": "✅ OK" if reg_excl == pub_excl else "❌ Deviation"
+    })
 
     # Hypotheses
     reg_hyp = str(len(reg_contract.hypotheses))
     pub_hyp = str(len(pub_contract.hypotheses))
-    rows.append({"Dimension": "Hypotheses", "📋 Registration": f"{reg_hyp} hypotheses", "📄 Publication": f"{pub_hyp} hypotheses", "Status": "✅ OK" if reg_hyp == pub_hyp else "❌ Deviation"})
+    rows.append({
+        "Dimension": "Hypotheses",
+        "Registration": f"{reg_hyp} hypotheses",
+        "Publication": f"{pub_hyp} hypotheses",
+        "Status": "✅ OK" if reg_hyp == pub_hyp else "❌ Deviation"
+    })
 
-    st.table(pd.DataFrame(rows))
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def render_graphs(rg, pg):

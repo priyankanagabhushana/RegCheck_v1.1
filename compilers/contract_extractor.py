@@ -101,6 +101,21 @@ _TRIAL_SIGNALS = [
     "nct0",
     "isrctn",
     "actrn",
+    "randomly assigned",
+    "randomly assigned",
+    "placebo",
+    "double-blind",
+    "double blind",
+    "efficacy",
+    "safety",
+    "vaccine",
+    "p < 0.05",
+    "p=0.0",
+    "hazard ratio",
+    "confidence interval",
+    "kaplan-meier",
+    "intention-to-treat",
+    "intention to treat",
 ]
 
 
@@ -138,7 +153,7 @@ def _preclassify_document(markdown: str) -> Optional[str]:
         return "other"
 
     # Strong trial signal: clinical trial language with no regulatory signals
-    if trial_count >= 4 and trial_count > non_trial_count * 2:
+    if trial_count >= 3 and trial_count > non_trial_count * 2:
         logger.info(
             f"Pre-classifier: clinical_trial "
             f"(trial={trial_count}, non_trial={non_trial_count})"
