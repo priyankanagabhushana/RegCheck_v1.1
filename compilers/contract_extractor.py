@@ -414,9 +414,14 @@ class ContractExtractor:
         """
         doc_id = f"{doc_type}_{Path(parsed.source_path).stem}"
 
-        # Classify document type first to prevent hallucination
-        doc_category = self._classify_document(parsed)
-        logger.info(f"Document classified as: {doc_category} ({doc_id})")
+        # CT.gov JSON is already structured clinical trial data — skip classification
+        if parsed.parser_name == "ctgov_json":
+            doc_category = "clinical_trial"
+            logger.info(f"CT.gov JSON detected, skipping classification ({doc_id})")
+        else:
+            # Classify document type first to prevent hallucination
+            doc_category = self._classify_document(parsed)
+            logger.info(f"Document classified as: {doc_category} ({doc_id})")
 
         if doc_category != "clinical_trial":
             return self._create_non_trial_contract(doc_id, doc_type, parsed, doc_category)

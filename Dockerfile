@@ -18,6 +18,8 @@ COPY demos/ demos/
 COPY tests/ tests/
 COPY data/samples/ data/samples/
 COPY data/output/ data/output/
+COPY data/study2_moderna_vaccine/ data/study2_moderna_vaccine/
+COPY data/study5_checkmate_outcome_switching/ data/study5_checkmate_outcome_switching/
 COPY main.py .
 COPY app.py .
 COPY auth.py .

@@ -1,4 +1,4 @@
-"""RegCheck v1.1 — Scientific Integrity Engine.
+"""RegCheck — Scientific Integrity Engine.
 
 Clean, modern web interface. No sidebar. Tab navigation.
 Docling + DeepSeek Vision for PDF parsing with image/flowchart understanding.
@@ -20,7 +20,7 @@ import networkx as nx
 logger = logging.getLogger(__name__)
 
 st.set_page_config(
-    page_title="RegCheck v1.1 — Scientific Integrity Engine",
+    page_title="RegCheck — Structured Reasoning Prototype",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -42,7 +42,7 @@ if not check_auth():
             <h2 style="margin:0 0 4px 0; font-weight:800; font-size:1.8rem;
                 background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-                RegCheck v1.1
+                RegCheck — Research Prototype
             </h2>
             <p style="color:#64748b; margin:0; font-size:0.92rem; font-weight:400; letter-spacing:0.02em;">
                 Scientific Integrity Engine
@@ -605,7 +605,7 @@ def plain_english_summary(ledger, reg_contract, pub_contract):
     if ledger.severity_counts.get("S2", 0) > 0:
         lines.append(f"🔵 **{ledger.severity_counts['S2']} reporting gap(s)** — some planned information is missing.")
     if ledger.total_deviations == 0:
-        lines.append("✅ No significant differences found.")
+        lines.append("✅ No deviations detected based on the extracted structured information.")
     return "\n".join(lines)
 
 
@@ -749,10 +749,10 @@ st.markdown("""
     <h1 style="margin:0; font-size:2.4rem; font-weight:800; letter-spacing:-0.5px;
         background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-        📄 RegCheck v1.1
+        🔬 RegCheck
     </h1>
     <p style="color:#64748b; font-size:1rem; margin:6px 0 0 0;">
-        Compare study registrations against publications — automatically
+        Structured reasoning prototype for comparing study registrations against publications
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -911,9 +911,9 @@ with tab_demo:
         **Registration:** [NCT04470427](https://clinicaltrials.gov/study/NCT04470427) on ClinicalTrials.gov
         **Publication:** Baden et al. (2021) *Efficacy and Safety of the mRNA-1273 SARS-CoV-2 Vaccine*, NEJM
 
-        This is a real Phase 3 trial with 5 primary outcomes and 15 secondary outcomes
-        registered on ClinicalTrials.gov. The system extracts structured data from both
-        the registration JSON and the NEJM publication PDF, then compares them.
+        A real Phase 3 COVID-19 vaccine trial. The system extracts structured data from both
+        the registration (fetched live from ClinicalTrials.gov) and the NEJM publication PDF,
+        then compares them using formal rules.
         """)
 
         if st.button("🔍 Run analysis", type="primary", use_container_width=True, key="btn_demo1"):
@@ -984,9 +984,9 @@ with tab_demo:
         **Registration:** [NCT01668784](https://clinicaltrials.gov/study/NCT01668784) on ClinicalTrials.gov
         **Publication:** Motzer et al. (2015) *Nivolumab versus Everolimus in Advanced Renal-Cell Carcinoma*, NEJM
 
-        This is a real Phase 3 oncology trial. The registration has 1 primary outcome
-        (Overall Survival) and 9 secondary outcomes. The system compares the structured
-        registration data against the publication to check for outcome reporting consistency.
+        A real Phase 3 oncology trial comparing nivolumab with everolimus.
+        The system extracts structured data from the registration and compares it
+        against the publication abstract.
         """)
 
         if st.button("🔍 Run analysis", type="primary", use_container_width=True, key="btn_demo2"):
@@ -1050,36 +1050,47 @@ with tab_demo:
 
 # ═══════════════════ ABOUT ═══════════════════
 with tab_about:
-    st.markdown("#### About RegCheck v1.1")
+    st.markdown("#### About This Prototype")
 
     st.markdown("""
-    **RegCheck v1.1** is a research prototype inspired by [RegCheck](https://arxiv.org/abs/2601.13330).
-    It explores an alternative internal architecture for comparing study registrations with published papers.
-    The goal is to make comparisons more structured, explainable, and easier to trace back to supporting evidence.
+    This is a research prototype exploring an alternative architecture for comparing study
+    registrations with published papers. It builds on the ideas introduced in the original
+    [RegCheck](https://arxiv.org/abs/2601.13330) while investigating more structured and
+    explainable reasoning.
     """)
 
     st.markdown("#### Motivation")
     st.markdown("""
     Clinical trial registrations and publications often differ in subtle ways —
     outcome switches, analysis changes, missing results.
-    The original RegCheck retrieves relevant evidence and asks an LLM to judge consistency.
-    This prototype explores whether compiling documents into structured study representations
-    before comparison can make the reasoning more transparent, reproducible, and easier to explain.
+    The original RegCheck retrieves relevant evidence and uses an LLM to assess consistency
+    between documents. This prototype explores whether compiling documents into structured
+    study representations before comparison can make the reasoning more transparent,
+    reproducible, and easier to explain.
     """)
 
     st.markdown("#### Core idea")
     st.markdown("""
-    > RegCheck v1 retrieves evidence and reasons directly over text.
+    > The original RegCheck retrieves evidence and reasons directly over text.
     > This prototype explores an alternative approach: building an evidence-backed
     > structured representation first, then reasoning over that representation using explicit rules.
     """)
 
-    st.markdown("#### Architectural comparison with the original RegCheck")
+    st.markdown("#### Why explore a different architecture?")
     st.markdown("""
-    | Aspect | RegCheck v1 | RegCheck v1.1 |
+    RegCheck retrieves evidence and reasons directly over text. This prototype explores
+    whether introducing an intermediate structured representation can make scientific
+    comparisons more transparent, easier to explain, and easier to extend with
+    domain-specific rules.
+    """)
+
+    st.markdown("#### Architectural overview")
+    st.markdown("The two systems follow different design philosophies.")
+    st.markdown("""
+    | Aspect | Original Architecture | This Prototype |
     |---|---|---|
     | **Document representation** | Retrieves relevant text passages | Builds a structured study representation (typed fields) |
-    | **Comparison strategy** | LLM judges retrieved evidence | Deterministic rules compare structured fields |
+    | **Comparison strategy** | LLM judges retrieved evidence | Structured fields are compared using explicit rule-based checks |
     | **Evidence** | Supporting text excerpts | Structured fields linked back to source evidence |
     | **Reasoning** | Prompt-guided LLM comparison | Rule-based reasoning over structured study representations |
     | **Extensibility** | Add new comparison prompts | Add new rule modules (constraint plugins) |
@@ -1089,7 +1100,7 @@ with tab_about:
 
     st.markdown("#### Design philosophy")
     st.markdown("""
-    | | RegCheck v1 | RegCheck v1.1 |
+    | | Original Architecture | This Prototype |
     |---|---|---|
     | **Philosophy** | Evidence retrieval | Evidence-guided structured reasoning |
     | **Representation** | Retrieved text | Typed study representation |
@@ -1101,7 +1112,7 @@ with tab_about:
 
     contribs = [
         ("1. Evidence-guided structured study representation", "Rather than reasoning directly over retrieved text, documents are compiled into typed study representations. Each field (hypothesis, outcome, analysis) is extracted only when supported by evidence found in the document."),
-        ("2. Deterministic, explainable rule-based comparison", "8 formal rules evaluate assertions with four-state logic: satisfied / violated / uncertain / missing. The system reports when data is absent rather than inventing deviations."),
+        ("2. Rule-based comparison with explicit logic", "8 formal rules evaluate assertions with four-state logic: satisfied / violated / uncertain / missing. The system reports when data is absent rather than inventing deviations."),
         ("3. Evidence provenance and uncertainty", "Every deviation links back to its source evidence. Uncertainty is tracked throughout the pipeline — from extraction through comparison to reporting."),
         ("4. Multimodal document understanding", "Documents are parsed for text, tables, and figures. Visual content (charts, flowcharts, CONSORT diagrams) is described and incorporated into the structured representation."),
     ]
@@ -1111,7 +1122,7 @@ with tab_about:
     st.markdown("#### Pipeline")
     st.markdown("""
     ```
-    PDF → Multimodal Parsing → Evidence-Guided Retrieval → Structured Extraction → Constraint Engine → Graph Comparison → Report
+    PDF → Multimodal Parsing → Evidence-Guided Retrieval → Structured Extraction → Rule-based Comparison → Report
     ```
     """)
 
@@ -1120,13 +1131,15 @@ with tab_about:
         1. **Multimodal Parsing** — Text, tables, and figures are extracted from the PDF using layout-aware parsing and vision models.
         2. **Evidence-Guided Retrieval** — Before extraction, the system searches for evidence of each field type (hypotheses, outcomes, etc.). Fields without evidence are marked as missing.
         3. **Structured Extraction** — The document is compiled into a typed study representation with full provenance tracking.
-        4. **Constraint Engine** — 8 formal rules compare the registration against the publication using four-state logic.
-        5. **Graph Comparison** — Structural and semantic differences are detected between the two study representations.
-        6. **Report** — Deviations are scored on four axes (severity, bias risk, evidence quality, confidence) and linked to editorial queries.
+        4. **Rule-based Comparison** — 8 formal rules compare the registration against the publication using four-state logic. Graph construction supports structural and semantic diff.
+        5. **Report** — Deviations are scored on four axes (severity, bias risk, evidence quality, confidence) and linked to editorial queries.
         """)
 
     st.markdown("#### Preliminary evaluation")
     st.markdown("""
+    The current evaluation focuses on the structured comparison pipeline.
+    Evaluation of extraction accuracy from PDFs into structured representations is ongoing.
+
     Benchmarked against the COMPARE Trials dataset (72 human-annotated trials, Goldacre et al. 2019).
 
     | Constraint | Precision | Recall | F1 |
@@ -1141,7 +1154,6 @@ with tab_about:
         st.markdown("""
         - C1 acts as a broad catch-all (recall=1.00 but precision=0.27).
         - C4 and C5 achieve perfect scores on the COMPARE dataset.
-        - The evaluation tests the comparison pipeline (constraint engine + graph differ) against real-world deviation patterns.
-        - Extraction quality (PDF → structured representation) is a separate evaluation concern.
+        - The current evaluation focuses on the structured comparison pipeline. Evaluation of extraction accuracy from PDFs into structured representations is ongoing.
         - Addressing C1 precision is the focus of the next research phase.
         """)
