@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 # ── Auth gate ──
-from auth import check_auth
+
 if not check_auth():
     st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1.2, 1])
