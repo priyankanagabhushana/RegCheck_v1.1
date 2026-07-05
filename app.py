@@ -45,7 +45,10 @@ if not check_auth():
                 RegCheck — Research Prototype
             </h2>
             <p style="color:#64748b; margin:0; font-size:0.92rem; font-weight:400; letter-spacing:0.02em;">
-                Scientific Integrity Engine
+                Structured Reasoning for Registration-Publication Comparison
+            </p>
+            <p style="color:#475569; margin:4px 0 0 0; font-size:0.75rem;">
+                by Priyanka Nagabhushana
             </p>
         </div>
         <div style="background: linear-gradient(135deg, #1e293b 0%, #172033 100%);
@@ -606,7 +609,17 @@ def render_comparison_table(reg_contract, pub_contract, cr):
     })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Dimension": st.column_config.TextColumn("Dimension", width="small"),
+            "Registration": st.column_config.TextColumn("Registration", width="medium"),
+            "Publication": st.column_config.TextColumn("Publication", width="medium"),
+            "Status": st.column_config.TextColumn("Status", width="small"),
+        },
+    )
 
 
 def render_graphs(rg, pg):
@@ -777,8 +790,11 @@ st.markdown("""
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
         🔬 RegCheck
     </h1>
-    <p style="color:#64748b; font-size:1rem; margin:6px 0 0 0;">
-        Structured reasoning prototype for comparing study registrations against publications
+    <p style="color:#94a3b8; font-size:0.9rem; margin:4px 0 0 0;">
+        Research Prototype — Structured Reasoning for Registration-Publication Comparison
+    </p>
+    <p style="color:#475569; font-size:0.75rem; margin:4px 0 0 0;">
+        by Priyanka Nagabhushana
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -789,7 +805,7 @@ with c2:
     active_model = st.selectbox(
         "LLM Model",
         options=["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
-        format_func=lambda x: "DeepSeek V4 Flash (fast)" if "flash" in x else "DeepSeek V4 Pro (capable)",
+        format_func=lambda x: "Fast" if "flash" in x else "Capable",
         index=0, label_visibility="collapsed",
     )
 with c4:
@@ -1089,12 +1105,16 @@ Return ONLY valid JSON."""
 # ═══════════════════ ABOUT ═══════════════════
 with tab_about:
     st.markdown("#### About This Prototype")
+    st.markdown("""
+    **Author:** Priyanka Nagabhushana
+    **Repository:** [priyankanagabhushana/RegCheck_v1.1](https://github.com/priyankanagabhushana/RegCheck_v1.1)
+    **Inspired by:** [RegCheck](https://arxiv.org/abs/2601.13330) by Cummins et al. (2026)
+    """)
 
     st.markdown("""
     This is a research prototype exploring an alternative architecture for comparing study
     registrations with published papers. It builds on the ideas introduced in the original
-    [RegCheck](https://arxiv.org/abs/2601.13330) while investigating more structured and
-    explainable reasoning.
+    RegCheck while investigating more structured and explainable reasoning.
     """)
 
     st.markdown("#### Motivation")

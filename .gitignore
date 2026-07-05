@@ -7,3 +7,6 @@ dist/
 build/
 .env
 .DS_Store
+POSITION_PAPER.md
+PITCH.md
+SIMPLE_EXPLANATION.md
