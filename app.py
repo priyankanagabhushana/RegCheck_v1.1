@@ -28,7 +28,7 @@ st.set_page_config(
 
 # ── Auth gate ──
 
-if not check_auth():
+if not st.session_state.get("authenticated", False):
     st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
