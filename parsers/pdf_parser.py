@@ -11,7 +11,7 @@ import logging
 import re
 from pathlib import Path
 
-from parsers.base import DocumentParser, ParsedDocument
+from parsers.base import DocumentParser, PageSpan, ParsedDocument
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,17 @@ class PyMuPDFParser(DocumentParser):
             raise FileNotFoundError(f"Source file not found: {source}")
 
         doc = fitz.open(str(source))
-        pages = []
+        page_blocks: list[str] = []
+        page_texts: list[str] = []
         tables = []
 
         for page_num in range(len(doc)):
             page = doc[page_num]
 
             # Extract text with layout preservation
-            text = page.get_text("text")
-            if text.strip():
-                pages.append(f"<!-- Page {page_num + 1} -->\n{text}")
+            text = page.get_text("text") or ""
+            page_texts.append(text)
+            page_blocks.append(f"<!-- Page {page_num + 1} -->\n{text}")
 
             # Try to extract tables using PyMuPDF's table detection
             try:
@@ -52,30 +53,40 @@ class PyMuPDFParser(DocumentParser):
             except Exception:
                 pass  # Table detection not available in all PDFs
 
-        doc.close()
-        markdown = "\n\n".join(pages)
-
-        # Extract metadata
         metadata = {}
-        try:
-            doc = fitz.open(str(source))
-            meta = doc.metadata
-            if meta:
-                metadata = {
-                    "title": meta.get("title", ""),
-                    "author": meta.get("author", ""),
-                    "subject": meta.get("subject", ""),
-                }
-            doc.close()
-        except Exception:
-            pass
+        meta = doc.metadata or {}
+        metadata = {
+            "title": meta.get("title", ""),
+            "author": meta.get("author", ""),
+            "subject": meta.get("subject", ""),
+        }
+
+        page_spans: list[PageSpan] = []
+        cursor = 0
+        for index, (block, page_text) in enumerate(zip(page_blocks, page_texts), start=1):
+            if index > 1:
+                cursor += 2  # separator inserted by "\\n\\n".join below
+            start = cursor
+            cursor += len(block)
+            page_spans.append(
+                PageSpan(
+                    page_number=index,
+                    text=page_text,
+                    char_start=start,
+                    char_end=cursor,
+                )
+            )
+
+        doc.close()
+        markdown = "\n\n".join(page_blocks)
 
         return ParsedDocument(
             source_path=str(source),
             markdown=markdown,
             tables=tables,
             metadata=metadata,
-            page_count=len(pages),
+            page_count=len(page_blocks),
+            pages=page_spans,
             parser_name="pymupdf",
             raw_text=markdown,
         )

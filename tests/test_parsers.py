@@ -96,3 +96,33 @@ class TestParsedDocument:
             parser_name="test",
         )
         assert len(doc.tables) == 2
+
+    def test_pages_default_to_empty(self):
+        doc = ParsedDocument(
+            source_path="/test",
+            markdown="content",
+            parser_name="test",
+        )
+        assert doc.pages == []
+
+
+class TestPdfParser:
+    def test_preserves_all_page_spans(self, tmp_path):
+        import fitz
+
+        from parsers.pdf_parser import PyMuPDFParser
+
+        path = tmp_path / "two-pages.pdf"
+        pdf = fitz.open()
+        pdf.new_page()
+        page = pdf.new_page()
+        page.insert_text((40, 60), "Second page text")
+        pdf.save(path)
+        pdf.close()
+
+        parsed = PyMuPDFParser().parse(path)
+
+        assert parsed.page_count == 2
+        assert [page.page_number for page in parsed.pages] == [1, 2]
+        assert parsed.pages[0].char_end > parsed.pages[0].char_start
+        assert "Second page text" in parsed.markdown[parsed.pages[1].char_start:]

@@ -6,6 +6,7 @@ Docling + DeepSeek Vision for PDF parsing with image/flowchart understanding.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import sys
@@ -66,7 +67,15 @@ if not st.session_state.get("authenticated", False):
                 import os as _os
                 expected_user = _os.environ.get("REGCHECK_USERNAME", "")
                 expected_pass = _os.environ.get("REGCHECK_PASSWORD", "")
-                if username == expected_user and password == expected_pass:
+                if not expected_user or not expected_pass:
+                    st.error(
+                        "Authentication is not configured. "
+                        "Set REGCHECK_USERNAME and REGCHECK_PASSWORD."
+                    )
+                elif (
+                    hmac.compare_digest(username, expected_user)
+                    and hmac.compare_digest(password, expected_pass)
+                ):
                     st.session_state.authenticated = True
                     st.rerun()
                 else:

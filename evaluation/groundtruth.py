@@ -41,6 +41,10 @@ class GroundTruth:
     # Free-text notes about expected deviations
     expected_deviations_notes: str = ""
 
+    # Scenario identifier for contract-level synthetic evaluation. Keeping this
+    # explicit prevents the evaluator from silently reusing one mock case.
+    scenario: str = ""
+
 
 @dataclass
 class GroundTruthDataset:
@@ -80,6 +84,7 @@ def load_known_deviations() -> GroundTruthDataset:
             "SAR table change: head threshold 3→3.2, head/torso row removed, "
             "extremities row removed. Contact info updated. Static field table unchanged."
         ),
+        scenario="fda_mri_guidance",
     ))
 
     # ── Clinical trial case study: outcome switch ──
@@ -98,6 +103,7 @@ def load_known_deviations() -> GroundTruthDataset:
             "sample size discrepancy S2, hypothesis missing S4, exclusion dropped S2, "
             "post-hoc claim S3"
         ),
+        scenario="mock_outcome_switch",
     ))
 
     # ── MRI case study: TR change, cross-vendor drop ──
@@ -110,6 +116,7 @@ def load_known_deviations() -> GroundTruthDataset:
             "MRI scanner parameter changes: TR changed, cross-vendor robustness "
             "checks dropped, preprocessing pipeline changed"
         ),
+        scenario="mock_mri_parameter_change",
     ))
 
     return dataset

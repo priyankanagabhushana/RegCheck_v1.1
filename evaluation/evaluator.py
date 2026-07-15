@@ -31,6 +31,7 @@ from .metrics import (
 class EvalReport:
     """Full evaluation report with per-constraint metrics and ablation."""
     dataset_name: str = "unnamed"
+    evaluation_mode: str = "unknown"
     total_pairs: int = 0
     pairs_evaluated: int = 0
     pairs_errored: int = 0
@@ -49,6 +50,7 @@ class EvalReport:
 
     # Errors
     errors: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
 
     @property
     def summary_text(self) -> str:
@@ -56,9 +58,13 @@ class EvalReport:
             f"\n{'='*60}",
             f"EVALUATION: {self.dataset_name}",
             f"{'='*60}",
+            f"Mode: {self.evaluation_mode}",
             f"Pairs evaluated: {self.pairs_evaluated}/{self.total_pairs}",
             f"Errors: {self.pairs_errored}",
         ]
+        if self.limitations:
+            lines.append("Limitations:")
+            lines.extend(f"- {limitation}" for limitation in self.limitations)
         return "\n".join(lines)
 
     def per_constraint_table(self) -> str:
@@ -94,7 +100,12 @@ class PipelineEvaluator:
         """Run full evaluation: per-constraint metrics + ablation + confusion."""
         report = EvalReport(
             dataset_name=f"{dataset.entries[0].source if dataset.entries else 'unknown'}_{len(dataset)}_pairs",
+            evaluation_mode="synthetic_contracts",
             total_pairs=len(dataset),
+        )
+        report.limitations.append(
+            "Known-deviation evaluation uses scenario-specific synthetic contracts; "
+            "it does not measure PDF extraction or end-to-end document accuracy."
         )
 
         # Gather detection results per pair
@@ -157,15 +168,64 @@ class PipelineEvaluator:
         return report
 
     def _run_pipeline_for_entry(self, entry: GroundTruth) -> list:
-        """Run pipeline on a ground-truth entry and return detected deviations."""
-        from agents.workflow import VerificationWorkflow
+        """Run the contract-level pipeline for this entry's own scenario."""
+        from agents.workflow import (
+            constraint_engine_node,
+            critic_agent_node,
+            graph_diff_node,
+            report_generator_node,
+        )
+        from compilers.contract_extractor import create_mock_contract
+        from schemas.ir import MRIParameters
 
-        workflow = VerificationWorkflow()
-        state = workflow.run(use_mock=True)
-        ledger = state.get("audit_ledger")
-        if ledger is None:
-            return []
-        return ledger.deviations
+        registration = create_mock_contract(f"reg_{entry.pair_id}", "registration")
+        publication = registration.model_copy(deep=True)
+        publication.doc_id = f"pub_{entry.pair_id}"
+        publication.doc_type = "publication"
+
+        if entry.scenario in {"mock_outcome_switch", "fda_mri_guidance"}:
+            publication.outcomes[0].measure = "STAI Anxiety Scale"
+            publication.analyses[0].model = "t-test"
+            publication.sample_size.actual_n = 147
+            publication.hypotheses = publication.hypotheses[:1]
+            publication.exclusion_criteria = []
+
+        if entry.scenario in {"mock_mri_parameter_change", "fda_mri_guidance"}:
+            registration.domain_params.mri = MRIParameters(
+                scanner_field_strength=3.0,
+                tr_ms=2000,
+                te_ms=30,
+                cross_vendor_checks=True,
+                uncertainty_quantification="full",
+            )
+            publication.domain_params.mri = MRIParameters(
+                scanner_field_strength=3.0,
+                tr_ms=1500,
+                te_ms=30,
+                cross_vendor_checks=False,
+                uncertainty_quantification="limited",
+            )
+
+        state = {
+            "registration_doc": None,
+            "publication_doc": None,
+            "registration_contract": registration,
+            "publication_contract": publication,
+            "registration_graph": None,
+            "publication_graph": None,
+            "graph_mutations": [],
+            "constraint_results": [],
+            "deviations": [],
+            "audit_ledger": None,
+            "errors": [],
+            "use_mock": True,
+            "model": None,
+        }
+        state.update(graph_diff_node(state))
+        state.update(constraint_engine_node(state))
+        state.update(critic_agent_node(state))
+        state.update(report_generator_node(state))
+        return state["audit_ledger"].deviations
 
     def _categorize_detections(self, deviations: list) -> dict[str, bool]:
         """Map detected deviations to constraint IDs."""
@@ -315,7 +375,7 @@ def _evaluate_compare_dataset(dataset: GroundTruthDataset) -> EvalReport:
 
     trials = load_compare_trials()
     if not trials:
-        report = EvalReport(dataset_name="compare_dataset")
+        report = EvalReport(dataset_name="compare_dataset", evaluation_mode="unavailable")
         report.errors.append("Could not load COMPARE trials CSV")
         return report
 
@@ -323,8 +383,13 @@ def _evaluate_compare_dataset(dataset: GroundTruthDataset) -> EvalReport:
 
     report = EvalReport(
         dataset_name=f"COMPARE Dataset ({len(trials)} human-annotated trials)",
+        evaluation_mode="contract_level_from_annotations",
         total_pairs=len(trials),
         pairs_evaluated=len(trials),
+    )
+    report.limitations.append(
+        "COMPARE results use contracts reconstructed from aggregate annotations; "
+        "they do not measure document extraction quality."
     )
 
     # Convert results to constraint metrics

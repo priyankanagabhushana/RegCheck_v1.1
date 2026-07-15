@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Optional
 
 from pydantic import ValidationError
@@ -49,8 +50,14 @@ PROVIDERS = {
 def get_active_config(session_state: dict) -> dict:
     """Get the active LLM configuration from session state."""
     provider = session_state.get("llm_provider", "deepseek")
+    if provider not in PROVIDERS:
+        provider = "deepseek"
+
+    provider_config = PROVIDERS[provider]
     api_key = session_state.get(f"api_key_{provider}", "")
-    model = session_state.get("llm_model", PROVIDERS[provider]["default_model"])
+    model = session_state.get("llm_model") or provider_config["default_model"]
+    if model not in provider_config["models"]:
+        model = provider_config["default_model"]
 
     return {
         "provider": provider,
@@ -146,6 +153,3 @@ def call_llm_structured(
                 })
 
     raise ValueError(f"Failed to get valid JSON from LLM after 3 attempts")
-
-
-import re
